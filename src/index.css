@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Previene rebotes y desplazamientos indeseados durante dibujo táctil */
+html, body {
+	height: 100%;
+	overscroll-behavior: none;
+	-webkit-overflow-scrolling: auto;
+	touch-action: manipulation; /* Permitimos taps pero no gestos complejos globales */
+}
+
+#root {
+	min-height: 100%;
+}
