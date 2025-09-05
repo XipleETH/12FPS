@@ -9,32 +9,25 @@ interface CanvasProps {
   brushMode?: 'solid' | 'soft' | 'fade' | 'spray';
   // Controlled zoom props (optional). If not provided, the component manages its own zoom internally.
   zoom?: number;
-  onZoomChange?: (z: number) => void;
 }
 
 const FIXED_WIDTH = 960; // nuevo tamaño solicitado
 const FIXED_HEIGHT = 600;
 
 export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
-  ({ activeColor, brushSize, isDrawing, setIsDrawing, disabled, brushMode = 'solid', zoom: controlledZoom, onZoomChange }, ref) => {
+  ({ activeColor, brushSize, isDrawing, setIsDrawing, disabled, brushMode = 'solid', zoom: controlledZoom }, ref) => {
     const internalRef = useRef<HTMLCanvasElement>(null);
     const canvasRef = (ref as React.RefObject<HTMLCanvasElement>) || internalRef;
     const lastPointRef = useRef<{ x: number; y: number } | null>(null);
     const strokeProgressRef = useRef<number>(0); // para modo fade
   const containerRef = useRef<HTMLDivElement>(null);
   // Internal zoom state only used when no controlled zoom is supplied
-  const [internalZoom, setInternalZoom] = useState(1);
+  const [internalZoom] = useState(1);
   const zoom = controlledZoom ?? internalZoom;
-  const updateZoom = (next: number) => {
-    const clamped = Math.min(4, Math.max(1, parseFloat(next.toFixed(3))));
-    if (controlledZoom !== undefined) {
-      if (clamped !== controlledZoom) onZoomChange?.(clamped);
-    } else {
-      setInternalZoom(clamped);
-    }
-  };
   const penActionRef = useRef<'draw' | 'erase' | 'pan' | null>(null);
   const eraseRef = useRef(false);
+  const activeDrawPointerIdRef = useRef<number | null>(null);
+  const activePanPointerIdRef = useRef<number | null>(null);
 
   useEffect(() => {
       const canvas = canvasRef.current;
@@ -155,23 +148,10 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
 
   // Helper removed (no touch drawing with stylus now)
 
-    const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
-      // Prevenir el comportamiento por defecto para evitar conflictos
-      e.preventDefault();
-      // Los eventos táctiles ahora se manejan completamente por pointer events
-    };
-
-    const handleTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
-      // Prevenir el comportamiento por defecto para evitar conflictos
-      e.preventDefault();
-      // Los eventos táctiles ahora se manejan completamente por pointer events
-    };
-
-    const handleTouchEnd = (e: React.TouchEvent<HTMLCanvasElement>) => {
-      // Prevenir el comportamiento por defecto para evitar conflictos
-      e.preventDefault();
-      // Los eventos táctiles ahora se manejan completamente por pointer events
-    };
+  // Touch events: let the browser handle scrolling for finger pan; no drawing on touch
+  const handleTouchStart = (_e: React.TouchEvent<HTMLCanvasElement>) => {};
+  const handleTouchMove = (_e: React.TouchEvent<HTMLCanvasElement>) => {};
+  const handleTouchEnd = (_e: React.TouchEvent<HTMLCanvasElement>) => {};
 
     const beginStroke = (pos: {x:number;y:number}, erase: boolean) => {
       strokeProgressRef.current = 0;
@@ -189,18 +169,23 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
     const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
       if (disabled) return;
       
-      // Capturar el pointer para evitar conflictos con otros eventos
-      (e.target as HTMLCanvasElement).setPointerCapture(e.pointerId);
+      // Si ya estamos dibujando con otro puntero, ignorar nuevos punteros (evitar pan + draw simultáneos)
+      if ((penActionRef.current === 'draw' || penActionRef.current === 'erase') && activeDrawPointerIdRef.current !== e.pointerId) {
+        return;
+      }
+
+      // Capturar el pointer solo para mouse/pen, nunca para touch (gestión propia de pan)
+      if (e.pointerType !== 'touch') {
+        (e.target as HTMLCanvasElement).setPointerCapture(e.pointerId);
+      }
       
       // Clear any previous action
       penActionRef.current = null;
       panState.current = null;
       
-      const container = containerRef.current!;
-      const rect = (e.target as HTMLCanvasElement).getBoundingClientRect();
-      const xInView = e.clientX - rect.left;
-      const yInView = e.clientY - rect.top;
-      const pos = { x: (xInView + container.scrollLeft) / zoom, y: (yInView + container.scrollTop) / zoom };
+  const container = containerRef.current!;
+  const native = e.nativeEvent as PointerEvent & { offsetX: number; offsetY: number };
+  const pos = { x: native.offsetX / zoom, y: native.offsetY / zoom };
       const buttons = e.buttons;
       
       if (e.pointerType === 'pen') {
@@ -210,43 +195,41 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
           beginStroke(pos, true);
         } else if (buttons & 1) { // pen tip (primary button) - drawing has priority over barrel button
           penActionRef.current = 'draw';
+          activeDrawPointerIdRef.current = e.pointerId;
           beginStroke(pos, false);
         } else if (buttons & 2) { // barrel button only (secondary button) - pan only when not drawing
           penActionRef.current = 'pan';
+          activePanPointerIdRef.current = e.pointerId;
           panState.current = { x: e.clientX, y: e.clientY, scrollLeft: container.scrollLeft, scrollTop: container.scrollTop };
         }
       } else if (e.pointerType === 'mouse') {
         if (buttons & 2) { // right button - pan
           penActionRef.current = 'pan';
+          activePanPointerIdRef.current = e.pointerId;
           panState.current = { x: e.clientX, y: e.clientY, scrollLeft: container.scrollLeft, scrollTop: container.scrollTop };
         } else if (buttons & 1) { // left button - draw
           penActionRef.current = 'draw';
+          activeDrawPointerIdRef.current = e.pointerId;
           beginStroke(pos, false);
         }
       } else if (e.pointerType === 'touch') {
-        // Para dispositivos táctiles, solo dibujar con un solo toque
-        // Usar pressure para distinguir entre stylus y dedo si está disponible
-        const isStylus = e.pressure > 0 && e.pressure < 1;
-        
-        if (buttons & 1 || isStylus || e.pressure === 0.5) { // stylus o toque primario
-          penActionRef.current = 'draw';
-          beginStroke(pos, false);
-        } else {
-          // Si no es un stylus claro, también dibujar por defecto
-          penActionRef.current = 'draw';
-          beginStroke(pos, false);
-        }
+        // Si ya se está dibujando con pen/mouse, ignorar pan táctil
+        if (penActionRef.current === 'draw' || penActionRef.current === 'erase') return;
+        // Pan con un dedo (sin dibujar)
+        penActionRef.current = 'pan';
+        activePanPointerIdRef.current = e.pointerId;
+        panState.current = { x: e.clientX, y: e.clientY, scrollLeft: container.scrollLeft, scrollTop: container.scrollTop };
       }
     };
 
     const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
       if (disabled) return;
-      if (!penActionRef.current) return;
+  if (!penActionRef.current) return;
       
       const container = containerRef.current!;
       
-      // Handle panning - only when explicitly in pan mode
-      if (penActionRef.current === 'pan' && panState.current) {
+  // Handle panning - only when explicitly in pan mode and for the same pointer
+  if (penActionRef.current === 'pan' && panState.current && activePanPointerIdRef.current === e.pointerId) {
         const dx = e.clientX - panState.current.x;
         const dy = e.clientY - panState.current.y;
         container.scrollLeft = panState.current.scrollLeft - dx;
@@ -255,11 +238,9 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
       }
       
       // Handle drawing/erasing - only when explicitly in draw or erase mode
-      if ((penActionRef.current === 'draw' || penActionRef.current === 'erase') && lastPointRef.current) {
-        const rect = (e.target as HTMLCanvasElement).getBoundingClientRect();
-        const xInView = e.clientX - rect.left;
-        const yInView = e.clientY - rect.top;
-        const pos = { x: (xInView + container.scrollLeft) / zoom, y: (yInView + container.scrollTop) / zoom };
+      if ((penActionRef.current === 'draw' || penActionRef.current === 'erase') && lastPointRef.current && activeDrawPointerIdRef.current === e.pointerId) {
+        const native = e.nativeEvent as PointerEvent & { offsetX: number; offsetY: number };
+        const pos = { x: native.offsetX / zoom, y: native.offsetY / zoom };
         
         if (penActionRef.current === 'erase') {
           const ctx = canvasRef.current?.getContext('2d');
@@ -284,18 +265,26 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
     };
 
     const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
-      // Liberar la captura del pointer
-      (e.target as HTMLCanvasElement).releasePointerCapture(e.pointerId);
-      
-      // Clean up based on current action
-      if (penActionRef.current === 'pan') {
-        panState.current = null;
-      } else if (penActionRef.current === 'draw' || penActionRef.current === 'erase') {
-        endStroke();
+      // Liberar la captura del pointer (si no es touch)
+      if (e.pointerType !== 'touch') {
+        (e.target as HTMLCanvasElement).releasePointerCapture(e.pointerId);
       }
       
-      // Always clear the current action
-      penActionRef.current = null;
+      // Clean up based on current action
+      if (penActionRef.current === 'pan' && activePanPointerIdRef.current === e.pointerId) {
+        panState.current = null;
+        activePanPointerIdRef.current = null;
+      } else if (penActionRef.current === 'draw' || penActionRef.current === 'erase') {
+        if (activeDrawPointerIdRef.current === e.pointerId) {
+          endStroke();
+          activeDrawPointerIdRef.current = null;
+        }
+      }
+      
+      // Clear action only if the finishing pointer matches
+      if (penActionRef.current && ((penActionRef.current === 'pan' && activePanPointerIdRef.current === null) || (penActionRef.current !== 'pan' && activeDrawPointerIdRef.current === null))) {
+        penActionRef.current = null;
+      }
     };
 
   // Eliminado bloqueo global; confiamos en touch-action local del canvas para evitar desplazamientos.
@@ -305,37 +294,20 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
         ref={containerRef}
         className="relative border rounded-lg bg-white inline-block overflow-auto"
         style={{ width: FIXED_WIDTH, height: FIXED_HEIGHT }}
-        onWheel={(e) => {
-          e.preventDefault();
-          const container = containerRef.current!;
-          const rect = container.getBoundingClientRect();
-          const xInView = e.clientX - rect.left;
-          const yInView = e.clientY - rect.top;
-          const logicalX = (xInView + container.scrollLeft) / zoom;
-          const logicalY = (yInView + container.scrollTop) / zoom;
-          const delta = e.deltaY > 0 ? -0.15 : 0.15; // factor
-          const next = Math.min(4, Math.max(1, parseFloat((zoom + delta).toFixed(3))));
-          if (next !== zoom) {
-            updateZoom(next);
-            requestAnimationFrame(() => {
-              container.scrollLeft = logicalX * next - xInView;
-              container.scrollTop = logicalY * next - yInView;
-            });
-          }
-        }}
       >
         <canvas
           ref={canvasRef}
           width={FIXED_WIDTH}
           height={FIXED_HEIGHT}
-          className={`block bg-white touch-none select-none ${
+          className={`block bg-white select-none ${
             disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-crosshair'
           }`}
           data-drawing={isDrawing ? 'true' : 'false'}
           style={{
             width: FIXED_WIDTH * zoom,
             height: FIXED_HEIGHT * zoom,
-            touchAction: 'none' // Importante: previene gestos táctiles del navegador
+            // Bloquear gestos del navegador; pan táctil gestionado por pointer events
+            touchAction: 'none'
           }}
           // mouse handled via pointer events
           onTouchStart={handleTouchStart}

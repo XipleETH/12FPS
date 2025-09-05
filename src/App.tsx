@@ -127,20 +127,6 @@ function App() {
                 {paletteSide === 'right' && (
                   <div className="flex flex-col gap-2 pt-2">
                     <div className="bg-white/12 backdrop-blur-xl border border-white/20 rounded-2xl p-3 flex flex-col items-center gap-3 shadow-md select-none">
-                      <button
-                        onClick={() => setZoom(z => Math.min(4, parseFloat((z + 0.25).toFixed(2))))}
-                        disabled={zoom >= 4}
-                        aria-label="Zoom in"
-                        className="w-9 h-9 flex items-center justify-center rounded-full bg-white/15 hover:bg-white/30 text-white text-lg font-bold disabled:opacity-30"
-                      >+
-                      </button>
-                      <button
-                        onClick={() => setZoom(z => Math.max(1, parseFloat((z - 0.25).toFixed(2))))}
-                        disabled={zoom <= 1}
-                        aria-label="Zoom out"
-                        className="w-9 h-9 flex items-center justify-center rounded-full bg-white/15 hover:bg-white/30 text-white text-lg font-bold disabled:opacity-30"
-                      >-
-                      </button>
                       <div className="flex flex-col items-center gap-2">
                         <input
                           type="range"
@@ -175,26 +161,11 @@ function App() {
                     disabled={!isSessionActive || timeLeft === 0}
                     brushMode={brushMode}
                     zoom={zoom}
-                    onZoomChange={setZoom}
                   />
                 </div>
                 {paletteSide === 'left' && (
                   <div className="flex flex-col gap-2 pt-2">
                     <div className="bg-white/12 backdrop-blur-xl border border-white/20 rounded-2xl p-3 flex flex-col items-center gap-3 shadow-md select-none">
-                      <button
-                        onClick={() => setZoom(z => Math.min(4, parseFloat((z + 0.25).toFixed(2))))}
-                        disabled={zoom >= 4}
-                        aria-label="Zoom in"
-                        className="w-9 h-9 flex items-center justify-center rounded-full bg-white/15 hover:bg-white/30 text-white text-lg font-bold disabled:opacity-30"
-                      >+
-                      </button>
-                      <button
-                        onClick={() => setZoom(z => Math.max(1, parseFloat((z - 0.25).toFixed(2))))}
-                        disabled={zoom <= 1}
-                        aria-label="Zoom out"
-                        className="w-9 h-9 flex items-center justify-center rounded-full bg-white/15 hover:bg-white/30 text-white text-lg font-bold disabled:opacity-30"
-                      >-
-                      </button>
                       <div className="flex flex-col items-center gap-2">
                         <input
                           type="range"
