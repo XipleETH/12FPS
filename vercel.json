@@ -1,0 +1,11 @@
+{
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Content-Security-Policy", "value": "frame-ancestors https://*.reddit.com https://reddit.com;" },
+        { "key": "X-Frame-Options", "value": "ALLOWALL" }
+      ]
+    }
+  ]
+}

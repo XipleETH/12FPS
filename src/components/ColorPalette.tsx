@@ -122,7 +122,7 @@ export const ColorPalette: React.FC<ColorPaletteProps> = ({
           />
         </div>
         <div className="flex flex-col gap-2 bg-white/10 rounded-lg p-2">
-          <span className="text-white/70 text-xs font-semibold tracking-wide">Brush Mode</span>
+          <span className="text-white/70 text-xs font-semibold tracking-wide">Brushes</span>
           <div className="flex flex-wrap gap-3 justify-center">
             {[
               { key: 'solid', icon: <Brush className="w-4 h-4" />, label: 'Solid' },
