@@ -19,6 +19,34 @@ export interface Frame {
 }
 
 function App() {
+  // Iframe embedding detection
+  const [isEmbedded, setIsEmbedded] = useState(false);
+  const [embedContext, setEmbedContext] = useState<string>('');
+
+  useEffect(() => {
+    try {
+      const embedded = window.self !== window.top;
+      setIsEmbedded(embedded);
+      
+      if (embedded) {
+        // Try to detect the parent origin for context
+        try {
+          const parentUrl = document.referrer || 'unknown';
+          if (parentUrl.includes('reddit.com')) {
+            setEmbedContext('reddit');
+          } else {
+            setEmbedContext('iframe');
+          }
+        } catch (e) {
+          setEmbedContext('iframe');
+        }
+      }
+    } catch (e) {
+      // Fallback if iframe detection fails
+      setIsEmbedded(false);
+    }
+  }, []);
+
   const [activeColor, setActiveColor] = useState('#FF6B6B');
   const [brushSize, setBrushSize] = useState(10);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -146,9 +174,16 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-violet-900">
-  {/* Navigation is now inside SidePanels */}
-  <div className="max-w-6xl mx-auto px-3 py-4">
+    <div className={`min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-violet-900 ${isEmbedded ? 'embedded-mode' : ''}`}>
+      {/* Embedding indicator for Reddit */}
+      {isEmbedded && embedContext === 'reddit' && (
+        <div className="bg-orange-500/90 text-white text-xs px-3 py-1 text-center font-medium">
+          🎨 Running in Reddit • Full experience at 12-fps.vercel.app
+        </div>
+      )}
+      
+      {/* Navigation is now inside SidePanels */}
+      <div className="max-w-6xl mx-auto px-3 py-4">
         {currentView === 'draw' && (
           <div className={`w-full flex justify-center gap-6 ${paletteSide === 'left' ? 'flex-row' : 'flex-row-reverse'}`}>
             <SidePanels
