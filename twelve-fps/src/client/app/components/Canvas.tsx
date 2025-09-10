@@ -16,8 +16,8 @@ interface CanvasProps {
 	onionOpacity?: number; // 0..1
 }
 
-const FIXED_WIDTH = 540;
-const FIXED_HEIGHT = 960;
+const FIXED_WIDTH = 540; // Logical drawing width
+const FIXED_HEIGHT = 960; // Logical drawing height
 
 export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
 	({ activeColor, brushSize, isDrawing, setIsDrawing, disabled, brushMode = 'solid', brushPreset, tool = 'draw', onBeforeMutate, zoom: controlledZoom, onionImage, onionOpacity = 0.4 }, ref) => {
@@ -26,8 +26,13 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
 		const lastPointRef = useRef<{ x: number; y: number } | null>(null);
 		const strokeProgressRef = useRef<number>(0);
 		const containerRef = useRef<HTMLDivElement>(null);
+		// User-controlled zoom (slider) remains separate from auto fit scaling.
 		const [internalZoom] = useState(1);
-		const zoom = controlledZoom ?? internalZoom;
+		const userZoom = controlledZoom ?? internalZoom;
+		// Auto scale to ensure the entire canvas fits on small (mobile) viewports without scroll.
+		const [autoScale, setAutoScale] = useState(1);
+		// Effective zoom used for sizing & pointer math (auto fit * user zoom)
+		const zoom = userZoom * autoScale;
 		const penActionRef = useRef<'draw' | 'erase' | 'pan' | null>(null);
 		const eraseRef = useRef(false);
 		const activeDrawPointerIdRef = useRef<number | null>(null);
@@ -46,6 +51,21 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
 			ctx.fillRect(0, 0, FIXED_WIDTH, FIXED_HEIGHT);
 			ctx.lineCap = 'round';
 			ctx.lineJoin = 'round';
+		}, []);
+
+		// Compute auto scale so the full logical canvas fits within viewport (no scroll needed) on mobile.
+		useEffect(() => {
+			const computeScale = () => {
+				const vw = window.innerWidth;
+				const vh = window.innerHeight;
+				// Reserve a small margin so it doesn't butt against edges (8px each side)
+				const margin = 16;
+				const scale = Math.min(1, (vw - margin) / FIXED_WIDTH, (vh - margin) / FIXED_HEIGHT);
+				setAutoScale(scale <= 0 ? 1 : scale);
+			};
+			computeScale();
+			window.addEventListener('resize', computeScale);
+			return () => window.removeEventListener('resize', computeScale);
 		}, []);
 
 		const hexToRgba = (hex: string, alpha: number) => {
@@ -362,6 +382,7 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
 			if (e.pointerType !== 'touch') (e.target as HTMLCanvasElement).setPointerCapture(e.pointerId);
 			penActionRef.current = null; panState.current = null;
 			const native = e.nativeEvent as PointerEvent & { offsetX: number; offsetY: number };
+			// Adjust pointer coords by effective zoom (auto fit * user zoom)
 			const pos = { x: native.offsetX / zoom, y: native.offsetY / zoom };
 			const buttons = e.buttons;
 			if (tool === 'fill' && e.pointerType !== 'touch') {
@@ -401,7 +422,11 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
 			if (penActionRef.current && ((penActionRef.current === 'pan' && activePanPointerIdRef.current === null) || (penActionRef.current !== 'pan' && activeDrawPointerIdRef.current === null))) penActionRef.current = null;
 		};
 		return (
-			<div ref={containerRef} className="relative border rounded-lg bg-white inline-block overflow-auto" style={{ width: FIXED_WIDTH, height: FIXED_HEIGHT }}>
+			<div
+				ref={containerRef}
+				className="relative border rounded-lg bg-white inline-block overflow-hidden"
+				style={{ width: FIXED_WIDTH * autoScale, height: FIXED_HEIGHT * autoScale }}
+			>
 				<div className="relative" style={{ width: FIXED_WIDTH * zoom, height: FIXED_HEIGHT * zoom }}>
 					{onionImage && (
 						<img src={onionImage} alt="previous frame" className="absolute inset-0 pointer-events-none" style={{ width: '100%', height: '100%', objectFit: 'fill', opacity: Math.max(0, Math.min(1, onionOpacity)) }} />
