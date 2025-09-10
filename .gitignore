@@ -7,6 +7,9 @@ dist/
 *.local
 .env*
 
+# Ignore accidental compiled JS duplicates for API routes (keep TS sources)
+api/*.js
+
 # Subproject build artifacts (keep sources)
 /twelve-fps/node_modules/
 /twelve-fps/dist/
