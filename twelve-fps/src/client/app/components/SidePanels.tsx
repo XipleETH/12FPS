@@ -1,16 +1,14 @@
 import React from 'react';
 import { brushKits, BrushStyle } from '../brushes';
-import { ChevronLeft, ChevronRight, MoveUp, MoveDown, Save, Trash2, Undo2, Pencil, Eraser, PaintBucket, Palette as PaletteIcon, Image, Play, Vote, MessageCircle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, MoveUp, MoveDown, Save, Trash2, Undo2, Pencil, Eraser, PaintBucket } from 'lucide-react';
 
-export type PanelKey = 'navigation' | 'actions' | 'tools' | 'brushSize' | 'brushMode' | 'palette';
+export type PanelKey = 'actions' | 'tools' | 'brushSize' | 'brushMode' | 'palette';
 
 interface SidePanelsProps {
 	side: 'left' | 'right';
 	toggleSide: () => void;
 	order: PanelKey[];
 	setOrder: (o: PanelKey[]) => void;
-	currentView: 'draw' | 'gallery' | 'video' | 'voting' | 'chat';
-	setCurrentView: (v: 'draw' | 'gallery' | 'video' | 'voting' | 'chat') => void;
 	tool: 'draw' | 'erase' | 'fill';
 	setTool: (t: 'draw' | 'erase' | 'fill') => void;
 	brushSize: number;
@@ -60,38 +58,19 @@ const PanelWrapper: React.FC<{
 );
 
 export const SidePanels: React.FC<SidePanelsProps> = (props) => {
-	const { side, toggleSide, order, setOrder, currentView, setCurrentView, tool, setTool, brushSize, setBrushSize, setBrushMode, brushStyle, setBrushStyle, brushPresetId, setBrushPresetId, colors, activeColor, setActiveColor, currentWeek, onSave, onClear, onUndo, disabled } = props;
+	const { side, toggleSide, order, setOrder, tool, setTool, brushSize, setBrushSize, setBrushMode, brushStyle, setBrushStyle, brushPresetId, setBrushPresetId, colors, activeColor, setActiveColor, currentWeek, onSave, onClear, onUndo, disabled } = props;
 	const move = (key: PanelKey, dir: -1 | 1) => {
 		const idx = order.indexOf(key);
 		const target = idx + dir;
-		if (target < 0 || target >= order.length) return;
-		const newOrder = [...order];
-		const [k] = newOrder.splice(idx, 1);
-		newOrder.splice(target, 0, k);
+		if (idx === -1 || target < 0 || target >= order.length) return;
+		const newOrder: PanelKey[] = [...order];
+		const removed = newOrder.splice(idx, 1)[0];
+		if (!removed) return;
+		newOrder.splice(target, 0, removed);
 		setOrder(newOrder);
 	};
 	const renderPanel = (key: PanelKey, idx: number) => {
 		const common = { side, onToggleSide: toggleSide, canUp: idx > 0, canDown: idx < order.length - 1, onUp: () => move(key, -1 as const), onDown: () => move(key, 1 as const) };
-		if (key === 'navigation') {
-			return (
-				<PanelWrapper key={key} title="Navigation" {...common}>
-					<div className="flex flex-wrap gap-2 justify-center">
-						{[
-							{ k: 'draw', label: 'Draw', icon: PaletteIcon },
-							{ k: 'gallery', label: 'Gallery', icon: Image },
-							{ k: 'video', label: 'Video', icon: Play },
-							{ k: 'voting', label: 'Vote', icon: Vote },
-							{ k: 'chat', label: 'Chat', icon: MessageCircle },
-						].map(({ k, label, icon: Icon }) => (
-							<button key={k} onClick={() => setCurrentView(k as any)} className={`px-2 py-1 rounded-md border text-[11px] flex items-center gap-1 transition ${currentView === (k as any) ? 'bg-white/30 border-white/60 text-white' : 'bg-white/10 border-white/20 text-white/80 hover:bg-white/20'}`} aria-label={label} title={label}>
-								<Icon className="w-3.5 h-3.5" />
-								{label}
-							</button>
-						))}
-					</div>
-				</PanelWrapper>
-			);
-		}
 		if (key === 'actions') {
 			return (
 				<PanelWrapper key={key} title="Actions" {...common}>
@@ -137,15 +116,19 @@ export const SidePanels: React.FC<SidePanelsProps> = (props) => {
 			return (
 				<PanelWrapper key={key} title="Brushes" {...common}>
 					<div className="flex items-center justify-center gap-1.5 mb-2">
-						{(['anime', 'comic', 'watercolor', 'graffiti'] as BrushStyle[]).map((s) => (
-							<button key={s} onClick={() => setBrushStyle(s)} disabled={disabled} className={`px-2 py-0.5 rounded-full text-[10px] border transition ${s === brushStyle ? 'bg-white/30 text-white border-white/60' : 'bg-white/10 text-white/70 border-white/20 hover:bg-white/20'}`}>{s[0].toUpperCase() + s.slice(1)}</button>
-						))}
+						{(['anime', 'comic', 'watercolor', 'graffiti'] as BrushStyle[]).map((s) => {
+							if (!s) return null;
+							const label = s.substring(0,1).toUpperCase() + s.substring(1);
+							return (
+								<button key={s} onClick={() => setBrushStyle(s)} disabled={disabled} className={`px-2 py-0.5 rounded-full text-[10px] border transition ${s === brushStyle ? 'bg-white/30 text-white border-white/60' : 'bg-white/10 text-white/70 border-white/20 hover:bg-white/20'}`}>{label}</button>
+							);
+						})}
 					</div>
 					<div className="flex flex-wrap gap-2 justify-center">
-						{brushKits[brushStyle].length === 0 ? (
+						{(brushKits[brushStyle] ?? []).length === 0 ? (
 							<div className="text-white/70 text-[11px] italic py-1">No brushes yet</div>
 						) : (
-							brushKits[brushStyle].map((p) => (
+							(brushKits[brushStyle] ?? []).map((p) => (
 								<button key={p.id} onClick={() => { setBrushPresetId(p.id); setBrushMode(p.engine); setBrushSize(p.size); }} disabled={disabled} className={`px-2 py-1 rounded-md border text-[11px] transition ${p.id === brushPresetId ? 'bg-white/30 border-white/60 text-white' : 'bg-white/10 border-white/20 text-white/80 hover:bg-white/20'}`} title={`${p.name} · ${p.engine}`}>{p.name}</button>
 							))
 						)}

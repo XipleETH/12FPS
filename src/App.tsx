@@ -2,13 +2,13 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Canvas } from './components/Canvas';
 // import { ColorPalette } from './components/ColorPalette';
 import { SidePanels, PanelKey } from './components/SidePanels';
-import { Timer } from './components/Timer';
+import { Header } from './components/Header';
 import { FrameGallery } from './components/FrameGallery';
 import { VideoPlayer } from './components/VideoPlayer';
 import { PaletteVoting } from './components/PaletteVoting';
 // Header removed: navigation moved into SidePanels
 import { ZoomIn, ZoomOut, Layers } from 'lucide-react';
-import { brushKits, BrushStyle, BrushPreset } from './brushes';
+// Brush presets removed; no brush imports needed
 
 export interface Frame {
   id: string;
@@ -56,10 +56,8 @@ function App() {
   const [isSessionActive, setIsSessionActive] = useState(false);
   const [currentWeek] = useState(1);
   const [paletteSide, setPaletteSide] = useState<'left' | 'right'>('right');
-  const [brushMode, setBrushMode] = useState<'solid' | 'soft' | 'fade' | 'spray'>('solid');
-  const [brushStyle, setBrushStyle] = useState<BrushStyle>('anime');
-  const [brushPresetId, setBrushPresetId] = useState<string>('');
-  const [panelsOrder, setPanelsOrder] = useState<PanelKey[]>(['navigation','actions','tools','brushSize','brushMode','palette']);
+  // Brush system disabled (presets & styles removed)
+  const [panelsOrder, setPanelsOrder] = useState<PanelKey[]>(['actions','tools','brushSize','brushMode','palette']);
   const [tool, setTool] = useState<'draw' | 'erase' | 'fill'>('draw');
   const [zoom, setZoom] = useState(1);
   const [onionOpacity, setOnionOpacity] = useState(0.35);
@@ -73,8 +71,7 @@ function App() {
   ];
   
   const currentPalette = weeklyPalettes[currentWeek % weeklyPalettes.length];
-  const currentPreset: BrushPreset | undefined =
-    brushKits[brushStyle]?.find(b => b.id === brushPresetId) || undefined;
+  // No currentPreset while brushes are disabled
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [undoStack, setUndoStack] = useState<ImageData[]>([]);
@@ -182,8 +179,8 @@ function App() {
         </div>
       )}
       
-      {/* Navigation is now inside SidePanels */}
-      <div className="max-w-6xl mx-auto px-3 py-4">
+  <Header currentView={currentView} setCurrentView={setCurrentView} />
+  <div className="max-w-6xl mx-auto px-3 pb-4">
         {currentView === 'draw' && (
           <div className={`w-full flex justify-center gap-6 ${paletteSide === 'left' ? 'flex-row' : 'flex-row-reverse'}`}>
             <SidePanels
@@ -191,17 +188,10 @@ function App() {
               toggleSide={() => setPaletteSide(p => p === 'right' ? 'left' : 'right')}
               order={panelsOrder}
               setOrder={setPanelsOrder}
-              currentView={currentView}
-              setCurrentView={setCurrentView}
               tool={tool}
               setTool={setTool}
               brushSize={brushSize}
               setBrushSize={setBrushSize}
-              setBrushMode={setBrushMode}
-              brushStyle={brushStyle}
-              setBrushStyle={setBrushStyle}
-              brushPresetId={brushPresetId}
-              setBrushPresetId={(id) => setBrushPresetId(id)}
               colors={currentPalette}
               activeColor={activeColor}
               setActiveColor={setActiveColor}
@@ -210,16 +200,15 @@ function App() {
               onClear={clearCanvas}
               onUndo={undo}
               disabled={!isSessionActive || timeLeft === 0}
+              timeLeft={timeLeft}
+              isSessionActive={isSessionActive}
+              onStartSession={startSession}
             />
-            <div ref={canvasCardRef} className="space-y-2">
-              <div className="flex justify-between items-center px-0.5">
-                <h2 className="text-xl font-semibold text-white tracking-tight">Canvas</h2>
-              </div>
+            <div ref={canvasCardRef}>
               <div className="flex items-start gap-4">
-        {paletteSide === 'right' && (
+                {paletteSide === 'right' && (
                   <div className="flex flex-col gap-2 pt-2">
                     <div className="bg-white/12 backdrop-blur-xl border border-white/20 rounded-2xl p-3 flex flex-col items-center gap-3 shadow-md select-none">
-                      <Timer timeLeft={timeLeft} isActive={isSessionActive} onStart={startSession} compact orientation="vertical" showProgress={false} />
                       <div className="flex flex-col items-center gap-1">
                         <ZoomIn className="w-4 h-4 text-white/70" />
                         <input
@@ -234,7 +223,6 @@ function App() {
                         />
                         <ZoomOut className="w-4 h-4 text-white/70" />
                       </div>
-                      {/* Reset button removed to avoid layout shift when zoom != 1 */}
                       <div className="flex flex-col items-center gap-1">
                         <Layers className="w-4 h-4 text-white/70" />
                         <input
@@ -251,7 +239,7 @@ function App() {
                     </div>
                   </div>
                 )}
-                <div className="inline-block rounded-xl border border-white/20 bg-white/10 backdrop-blur-sm" style={{ width: 540, height: 960 }}>
+                <div className="inline-block">
                   <Canvas
                     ref={canvasRef}
                     activeColor={activeColor}
@@ -259,8 +247,8 @@ function App() {
                     isDrawing={isDrawing}
                     setIsDrawing={setIsDrawing}
                     disabled={!isSessionActive || timeLeft === 0}
-                    brushMode={brushMode}
-                    brushPreset={currentPreset}
+                    brushMode={'solid'}
+                    brushPreset={undefined}
                     tool={tool}
                     onBeforeMutate={snapshotCanvas}
                     zoom={zoom}
@@ -268,10 +256,9 @@ function App() {
                     onionOpacity={onionOpacity}
                   />
                 </div>
-        {paletteSide === 'left' && (
+                {paletteSide === 'left' && (
                   <div className="flex flex-col gap-2 pt-2">
                     <div className="bg-white/12 backdrop-blur-xl border border-white/20 rounded-2xl p-3 flex flex-col items-center gap-3 shadow-md select-none">
-                      <Timer timeLeft={timeLeft} isActive={isSessionActive} onStart={startSession} compact orientation="vertical" showProgress={false} />
                       <div className="flex flex-col items-center gap-1">
                         <ZoomIn className="w-4 h-4 text-white/70" />
                         <input
@@ -286,7 +273,6 @@ function App() {
                         />
                         <ZoomOut className="w-4 h-4 text-white/70" />
                       </div>
-                      {/* Reset button removed to avoid layout shift when zoom != 1 */}
                       <div className="flex flex-col items-center gap-1">
                         <Layers className="w-4 h-4 text-white/70" />
                         <input

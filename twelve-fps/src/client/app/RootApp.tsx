@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Canvas } from './components/Canvas';
 import { SidePanels, PanelKey } from './components/SidePanels';
+import { AppHeader } from './components/AppHeader';
 import { Timer } from './components/Timer';
 import { FrameGallery } from './components/FrameGallery';
 import { VideoPlayer } from './components/VideoPlayer';
@@ -26,7 +27,7 @@ const RootApp: React.FC = () => {
   const [brushMode, setBrushMode] = useState<'solid' | 'soft' | 'fade' | 'spray'>('solid');
   const [brushStyle, setBrushStyle] = useState<BrushStyle>('anime');
   const [brushPresetId, setBrushPresetId] = useState('');
-  const [panelsOrder, setPanelsOrder] = useState<PanelKey[]>(['navigation','actions','tools','brushSize','brushMode','palette']);
+  const [panelsOrder, setPanelsOrder] = useState<PanelKey[]>(['actions','tools','brushSize','brushMode','palette']);
   const [tool, setTool] = useState<'draw' | 'erase' | 'fill'>('draw');
   const [zoom, setZoom] = useState(1);
   const [onionOpacity, setOnionOpacity] = useState(0.35);
@@ -47,11 +48,12 @@ const RootApp: React.FC = () => {
     <div className={`min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-violet-900 ${isEmbedded?'embedded-mode':''}`}>
       {isEmbedded && <div className="bg-orange-500/90 text-white text-xs px-3 py-1 text-center font-medium">Running inside Reddit WebView</div>}
       <div className="max-w-6xl mx-auto px-3 py-4">
+        <AppHeader currentView={currentView} setCurrentView={setCurrentView} />
         {currentView==='draw' && (
           <div className={`w-full flex justify-center gap-6 ${paletteSide==='left'?'flex-row':'flex-row-reverse'}`}> 
-            <SidePanels side={paletteSide} toggleSide={()=>setPaletteSide(p=>p==='right'?'left':'right')} order={panelsOrder} setOrder={setPanelsOrder} currentView={currentView} setCurrentView={setCurrentView} tool={tool} setTool={setTool} brushSize={brushSize} setBrushSize={setBrushSize} setBrushMode={setBrushMode} brushStyle={brushStyle} setBrushStyle={setBrushStyle} brushPresetId={brushPresetId} setBrushPresetId={setBrushPresetId} colors={currentPalette as string[]} activeColor={activeColor} setActiveColor={setActiveColor} currentWeek={currentWeek} onSave={saveFrame} onClear={clearCanvas} onUndo={undo} disabled={!isSessionActive || timeLeft===0} />
+            <SidePanels side={paletteSide} toggleSide={()=>setPaletteSide(p=>p==='right'?'left':'right')} order={panelsOrder} setOrder={setPanelsOrder} tool={tool} setTool={setTool} brushSize={brushSize} setBrushSize={setBrushSize} setBrushMode={setBrushMode} brushStyle={brushStyle} setBrushStyle={setBrushStyle} brushPresetId={brushPresetId} setBrushPresetId={setBrushPresetId} colors={currentPalette as string[]} activeColor={activeColor} setActiveColor={setActiveColor} currentWeek={currentWeek} onSave={saveFrame} onClear={clearCanvas} onUndo={undo} disabled={!isSessionActive || timeLeft===0} />
             <div ref={canvasCardRef} className="space-y-2">
-              <div className="flex justify-between items-center px-0.5"><h2 className="text-xl font-semibold text-white tracking-tight">Canvas</h2></div>
+              <div className="flex justify-between items-center px-0.5"><h2 className="text-xl font-semibold text-white tracking-tight">12FPS</h2></div>
               <div className="flex items-start gap-4">
                 {paletteSide==='right' && (
                   <div className="flex flex-col gap-2 pt-2">

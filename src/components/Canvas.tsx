@@ -21,7 +21,7 @@ interface CanvasProps {
 }
 
 const FIXED_WIDTH = 540; // nuevo tamaño solicitado
-const FIXED_HEIGHT = 960;
+const FIXED_HEIGHT = 740;
 
 export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
   ({ activeColor, brushSize, isDrawing, setIsDrawing, disabled, brushMode = 'solid', brushPreset, tool = 'draw', onBeforeMutate, zoom: controlledZoom, onionImage, onionOpacity = 0.4 }, ref) => {

@@ -1,8 +1,7 @@
 import React from 'react';
-import { brushKits, BrushStyle } from '../brushes';
-import { ChevronLeft, ChevronRight, MoveUp, MoveDown, Save, Trash2, Undo2, Pencil, Eraser, PaintBucket, Palette as PaletteIcon, Image, Play, Vote, MessageCircle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, MoveUp, MoveDown, Save, Trash2, Undo2, Pencil, Eraser, PaintBucket, Play, Clock } from 'lucide-react';
 
-export type PanelKey = 'navigation' | 'actions' | 'tools' | 'brushSize' | 'brushMode' | 'palette';
+export type PanelKey = 'actions' | 'tools' | 'brushSize' | 'brushMode' | 'palette';
 
 interface SidePanelsProps {
   side: 'left' | 'right';
@@ -10,18 +9,12 @@ interface SidePanelsProps {
   order: PanelKey[];
   setOrder: (o: PanelKey[]) => void;
   // navigation
-  currentView: 'draw' | 'gallery' | 'video' | 'voting' | 'chat';
-  setCurrentView: (v: 'draw' | 'gallery' | 'video' | 'voting' | 'chat') => void;
   // drawing related
   tool: 'draw' | 'erase' | 'fill';
   setTool: (t: 'draw' | 'erase' | 'fill') => void;
   brushSize: number;
   setBrushSize: (n: number) => void;
-  setBrushMode: (m: 'solid' | 'soft' | 'fade' | 'spray') => void;
-  brushStyle: BrushStyle;
-  setBrushStyle: (s: BrushStyle) => void;
-  brushPresetId: string;
-  setBrushPresetId: (id: string) => void;
+  // (brush-related props removed)
   colors: string[];
   activeColor: string;
   setActiveColor: (c: string) => void;
@@ -30,6 +23,10 @@ interface SidePanelsProps {
   onClear: () => void;
   onUndo?: () => void;
   disabled?: boolean;
+  // session controls
+  timeLeft?: number;
+  isSessionActive?: boolean;
+  onStartSession?: () => void;
 }
 
 const PanelWrapper: React.FC<{
@@ -66,17 +63,10 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
   toggleSide,
   order,
   setOrder,
-  currentView,
-  setCurrentView,
   tool,
   setTool,
   brushSize,
   setBrushSize,
-  setBrushMode,
-  brushStyle,
-  setBrushStyle,
-  brushPresetId,
-  setBrushPresetId,
   colors,
   activeColor,
   setActiveColor,
@@ -85,6 +75,9 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
   onClear,
   onUndo,
   disabled,
+  timeLeft,
+  isSessionActive,
+  onStartSession,
 }) => {
   const move = (key: PanelKey, dir: -1 | 1) => {
     const idx = order.indexOf(key);
@@ -106,46 +99,34 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
       onDown: () => move(key, 1 as const),
     };
 
-    if (key === 'navigation') {
-      return (
-        <PanelWrapper key={key} title="Navigation" {...common}>
-          <div className="flex flex-wrap gap-2 justify-center">
-            {[
-              { k: 'draw', label: 'Draw', icon: PaletteIcon },
-              { k: 'gallery', label: 'Gallery', icon: Image },
-              { k: 'video', label: 'Video', icon: Play },
-              { k: 'voting', label: 'Vote', icon: Vote },
-              { k: 'chat', label: 'Chat', icon: MessageCircle },
-            ].map(({ k, label, icon: Icon }) => (
-              <button
-                key={k}
-                onClick={() => setCurrentView(k as any)}
-                className={`px-2 py-1 rounded-md border text-[11px] flex items-center gap-1 transition ${currentView === (k as any) ? 'bg-white/30 border-white/60 text-white' : 'bg-white/10 border-white/20 text-white/80 hover:bg-white/20'}`}
-                aria-label={label}
-                title={label}
-              >
-                <Icon className="w-3.5 h-3.5" />
-                {label}
-              </button>
-            ))}
-          </div>
-        </PanelWrapper>
-      );
-    }
 
     if (key === 'actions') {
       return (
         <PanelWrapper key={key} title="Actions" {...common}>
-          <div className="flex items-center justify-center gap-4">
-            <button onClick={() => !disabled && onSave()} disabled={disabled} aria-label="Save Frame" className="p-3 rounded-full bg-emerald-500/70 hover:bg-emerald-500 text-white disabled:opacity-40 transition">
-              <Save className="w-5 h-5" />
-            </button>
-            <button onClick={() => !disabled && onUndo?.()} disabled={disabled} aria-label="Undo" title="Undo" className="p-3 rounded-full bg-indigo-500/70 hover:bg-indigo-500 text-white disabled:opacity-40 transition">
-              <Undo2 className="w-5 h-5" />
-            </button>
-            <button onClick={() => !disabled && onClear()} disabled={disabled} aria-label="Clear Canvas" className="p-3 rounded-full bg-red-500/70 hover:bg-red-500 text-white disabled:opacity-40 transition">
-              <Trash2 className="w-5 h-5" />
-            </button>
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-center gap-3">
+              <button onClick={() => !disabled && onSave()} disabled={disabled} aria-label="Save Frame" className="p-2.5 rounded-full bg-emerald-500/70 hover:bg-emerald-500 text-white disabled:opacity-40 transition">
+                <Save className="w-5 h-5" />
+              </button>
+              <button onClick={() => !disabled && onUndo?.()} disabled={disabled} aria-label="Undo" title="Undo" className="p-2.5 rounded-full bg-indigo-500/70 hover:bg-indigo-500 text-white disabled:opacity-40 transition">
+                <Undo2 className="w-5 h-5" />
+              </button>
+              <button onClick={() => !disabled && onClear()} disabled={disabled} aria-label="Clear Canvas" className="p-2.5 rounded-full bg-red-500/70 hover:bg-red-500 text-white disabled:opacity-40 transition">
+                <Trash2 className="w-5 h-5" />
+              </button>
+            </div>
+            {typeof timeLeft === 'number' && (
+              <div className="flex items-center justify-center gap-2 text-white/90 text-[11px] font-mono">
+                <Clock className="w-4 h-4 text-white/80" />
+                <span>{new Date(timeLeft * 1000).toISOString().substring(11,19)}</span>
+                {!isSessionActive && timeLeft > 0 && (
+                  <button onClick={onStartSession} className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-500/80 hover:bg-green-500 text-white text-[11px] font-semibold">
+                    <Play className="w-3.5 h-3.5" />
+                    Start
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </PanelWrapper>
       );
@@ -196,40 +177,7 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
     if (key === 'brushMode') {
       return (
         <PanelWrapper key={key} title="Brushes" {...common}>
-          <div className="flex items-center justify-center gap-1.5 mb-2">
-            {(['anime', 'comic', 'watercolor', 'graffiti'] as BrushStyle[]).map((s) => (
-              <button
-                key={s}
-                onClick={() => setBrushStyle(s)}
-                disabled={disabled}
-                className={`px-2 py-0.5 rounded-full text-[10px] border transition ${s === brushStyle ? 'bg-white/30 text-white border-white/60' : 'bg-white/10 text-white/70 border-white/20 hover:bg-white/20'}`}
-                title={s}
-              >
-                {s[0].toUpperCase() + s.slice(1)}
-              </button>
-            ))}
-          </div>
-          <div className="flex flex-wrap gap-2 justify-center">
-            {brushKits[brushStyle].length === 0 ? (
-              <div className="text-white/70 text-[11px] italic py-1">No brushes yet</div>
-            ) : (
-              brushKits[brushStyle].map((p) => (
-                <button
-                  key={p.id}
-                  onClick={() => {
-                    setBrushPresetId(p.id);
-                    setBrushMode(p.engine);
-                    setBrushSize(p.size);
-                  }}
-                  disabled={disabled}
-                  className={`px-2 py-1 rounded-md border text-[11px] transition ${p.id === brushPresetId ? 'bg-white/30 border-white/60 text-white' : 'bg-white/10 border-white/20 text-white/80 hover:bg-white/20'}`}
-                  title={`${p.name} · ${p.engine}`}
-                >
-                  {p.name}
-                </button>
-              ))
-            )}
-          </div>
+          <div className="text-white/60 text-[11px] italic text-center py-4 select-none">No brushes</div>
         </PanelWrapper>
       );
     }
