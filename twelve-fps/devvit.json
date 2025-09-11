@@ -2,7 +2,7 @@
   "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
   "name": "twelve-fps",
   "post": {
-    "dir": "dist/client",
+    "dir": "assets",
     "entrypoints": {
       "default": {
         "entry": "index.html"
