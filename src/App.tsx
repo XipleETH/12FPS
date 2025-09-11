@@ -56,6 +56,7 @@ function App() {
   const [pendingFrameDataUrl, setPendingFrameDataUrl] = useState<string | null>(null);
   // Estado para último error de subida
   const [lastUploadError, setLastUploadError] = useState<string | null>(null);
+  const [uploadDebug, setUploadDebug] = useState<{ key?: string; signedUrl?: string; putStatus?: number } | null>(null);
   const [currentView, setCurrentView] = useState<'draw' | 'gallery' | 'video' | 'voting' | 'chat'>('draw');
   const [timeLeft, setTimeLeft] = useState(7200); // 2 hours in seconds
   const [isSessionActive, setIsSessionActive] = useState(false);
@@ -124,7 +125,7 @@ function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ contentType: 'image/png', ext: 'png', prefix: 'frames' })
         });
-        if (!resp.ok) {
+  if (!resp.ok) {
           const text = await resp.text();
           console.error('[upload] signed url request failed', resp.status, text);
           throw new Error('Failed to get signed URL');
@@ -132,17 +133,19 @@ function App() {
         const { signedUrl, publicUrl, key } = await resp.json();
         console.log('[upload] got signed url', { key, hasPublic: !!publicUrl });
         const put = await fetch(signedUrl, { method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: blob });
-        if (!put.ok) {
+  if (!put.ok) {
           const text = await put.text();
           console.error('[upload] put failed', put.status, text);
           throw new Error('Upload failed');
         }
         console.log('[upload] put success');
+  setUploadDebug({ key, signedUrl, putStatus: 200 });
         return { url: publicUrl || signedUrl.split('?')[0], key };
       } catch (e) {
-        console.error('[upload] falling back to dataUrl', e);
-        setLastUploadError((e as any)?.message || 'upload error');
-        return { url: dataUrl };
+  console.error('[upload] error (no fallback)', e);
+  setLastUploadError((e as any)?.message || 'upload error');
+  setUploadDebug(d => ({ ...(d||{}), putStatus: -1 }));
+  return null; // no fallback para ver fallo real
       }
     } catch {
       console.error('[upload] unexpected failure converting dataURL');
@@ -188,7 +191,10 @@ function App() {
       }
       console.log('[finalize] iniciando subida frame final');
       const uploaded = await uploadDataUrlPNG(target);
-      if (!uploaded) return;
+      if (!uploaded) {
+        console.warn('[finalize] upload result null');
+        return;
+      }
       const newFrame: Frame = {
         id: uploaded.key || Date.now().toString(),
         key: uploaded.key,
@@ -419,6 +425,13 @@ function App() {
         {lastUploadError && (
           <div className="mt-4 text-xs text-red-300 font-mono break-all">
             upload error: {lastUploadError}
+          </div>
+        )}
+        {uploadDebug && (
+          <div className="mt-2 text-[10px] text-white/50 font-mono break-all space-y-1">
+            <div>key: {uploadDebug.key || '—'}</div>
+            <div>putStatus: {uploadDebug.putStatus ?? '—'}</div>
+            <div className="truncate">signedUrl: {uploadDebug.signedUrl?.slice(0,80)}...</div>
           </div>
         )}
 
