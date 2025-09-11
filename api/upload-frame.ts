@@ -44,10 +44,11 @@ export default async function handler(req:any,res:any){
       CacheControl: 'public, max-age=31536000, immutable'
     }));
 
-    const publicBase = process.env.R2_PUBLIC_BASE_URL?.replace(/\/$/,'');
-    const url = publicBase ? `${publicBase}/${key}` : `${process.env.R2_ENDPOINT!.replace(/\/$/,'')}/${process.env.R2_BUCKET!}/${key}`;
-    console.log('[api/upload-frame] stored', { key, size: buffer.length });
-    return res.status(200).json({ ok:true, key, url });
+  const publicBase = process.env.R2_PUBLIC_BASE_URL?.replace(/\/$/,'');
+  // If no public base assume object is private and must be proxied
+  const url = publicBase ? `${publicBase}/${key}` : `/api/frame?key=${encodeURIComponent(key)}`;
+  console.log('[api/upload-frame] stored', { key, size: buffer.length, viaProxy: !publicBase });
+  return res.status(200).json({ ok:true, key, url, viaProxy: !publicBase });
   } catch(e:any){
     console.error('[api/upload-frame] error', e?.message || e);
     return res.status(500).json({ error:'Upload failed' });

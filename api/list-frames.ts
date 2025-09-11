@@ -36,7 +36,7 @@ export default async function handler(req:any,res:any){
       .map(o => {
         const key = o.Key!;
         const lastModified = o.LastModified ? new Date(o.LastModified).getTime() : Date.now();
-        const url = publicBase ? `${publicBase}/${key}` : `${endpoint.replace(/\/$/,'')}/${bucket}/${key}`;
+        const url = publicBase ? `${publicBase}/${key}` : `/api/frame?key=${encodeURIComponent(key)}`;
         return { key, url, lastModified };
       })
       .sort((a,b)=>a.lastModified-b.lastModified);
