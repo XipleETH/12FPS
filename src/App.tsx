@@ -51,9 +51,12 @@ function App() {
   const [brushSize, setBrushSize] = useState(10);
   const [isDrawing, setIsDrawing] = useState(false);
   const [frames, setFrames] = useState<Frame[]>([]);
+  // Frame temporal (solo cache local durante la sesión)
+  const [pendingFrameDataUrl, setPendingFrameDataUrl] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState<'draw' | 'gallery' | 'video' | 'voting' | 'chat'>('draw');
   const [timeLeft, setTimeLeft] = useState(7200); // 2 hours in seconds
   const [isSessionActive, setIsSessionActive] = useState(false);
+  const [sessionStartTs, setSessionStartTs] = useState<number | null>(null);
   const [currentWeek] = useState(1);
   const [paletteSide, setPaletteSide] = useState<'left' | 'right'>('right');
   // Brush system disabled (presets & styles removed)
@@ -96,33 +99,50 @@ function App() {
   const startSession = () => {
     setIsSessionActive(true);
     setTimeLeft(7200);
+    setPendingFrameDataUrl(null);
+  setSessionStartTs(Date.now());
   };
 
-  async function uploadCanvasPNG(): Promise<{ url: string; key?: string } | null> {
-    if (!canvasRef.current) return null;
-    const canvas = canvasRef.current;
-    // Convert to Blob for upload
-    const blob: Blob = await new Promise((resolve) => canvas.toBlob(b => resolve(b as Blob), 'image/png'));
+  // Sube un dataURL al backend (solo cuando termina la sesión)
+  async function uploadDataUrlPNG(dataUrl: string): Promise<{ url: string; key?: string } | null> {
+    // Convert dataURL to Blob
     try {
-      const resp = await fetch('/api/upload-url', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contentType: 'image/png', ext: 'png', prefix: 'frames' })
-      });
-      if (!resp.ok) throw new Error('Failed to get signed URL');
-      const { signedUrl, publicUrl, key } = await resp.json();
-      const put = await fetch(signedUrl, { method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: blob });
-      if (!put.ok) throw new Error('Upload failed');
-      return { url: publicUrl || signedUrl.split('?')[0], key };
-    } catch (e) {
-      // Fallback: embed data URL locally
-      const dataUrl = canvas.toDataURL('image/png');
-      return { url: dataUrl };
+      const parts = dataUrl.split(',');
+      const base64 = parts[1];
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: 'image/png' });
+      try {
+        const resp = await fetch('/api/upload-url', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contentType: 'image/png', ext: 'png', prefix: 'frames' })
+        });
+        if (!resp.ok) throw new Error('Failed to get signed URL');
+        const { signedUrl, publicUrl, key } = await resp.json();
+        const put = await fetch(signedUrl, { method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: blob });
+        if (!put.ok) throw new Error('Upload failed');
+        return { url: publicUrl || signedUrl.split('?')[0], key };
+      } catch (e) {
+        return { url: dataUrl };
+      }
+    } catch {
+      return null;
     }
   }
 
-  const saveFrame = useCallback(async () => {
-    const uploaded = await uploadCanvasPNG();
+  // Guardar dentro de la sesión: solo cache local, no subir
+  const saveFrame = useCallback(() => {
+    if (!canvasRef.current || !isSessionActive) return;
+    const dataUrl = canvasRef.current.toDataURL('image/png');
+    setPendingFrameDataUrl(dataUrl);
+  }, [isSessionActive]);
+
+  // Al finalizar la sesión se sube la última imagen cacheada
+  const finalizeSessionUpload = useCallback(async () => {
+    if (!pendingFrameDataUrl) return;
+    const uploaded = await uploadDataUrlPNG(pendingFrameDataUrl);
     if (!uploaded) return;
     const newFrame: Frame = {
       id: Date.now().toString(),
@@ -132,7 +152,25 @@ function App() {
       paletteWeek: currentWeek
     };
     setFrames(prev => [...prev, newFrame]);
-  }, [currentWeek]);
+    setPendingFrameDataUrl(null);
+  }, [pendingFrameDataUrl, currentWeek]);
+
+  const forceEndSession = useCallback(() => {
+    if (!isSessionActive) return;
+    setIsSessionActive(false);
+    setTimeLeft(0);
+    // finalizeSessionUpload will run via effect OR call directly for immediacy
+    finalizeSessionUpload();
+  }, [isSessionActive, finalizeSessionUpload]);
+
+  // Detectar fin de sesión (timer llega a 0)
+  const prevIsActiveRef = useRef(isSessionActive);
+  useEffect(() => {
+    if (prevIsActiveRef.current && !isSessionActive && timeLeft === 0) {
+      finalizeSessionUpload();
+    }
+    prevIsActiveRef.current = isSessionActive;
+  }, [isSessionActive, timeLeft, finalizeSessionUpload]);
 
   const clearCanvas = () => {
     if (!canvasRef.current) return;
@@ -203,6 +241,7 @@ function App() {
               timeLeft={timeLeft}
               isSessionActive={isSessionActive}
               onStartSession={startSession}
+              onForceEnd={forceEndSession}
             />
             <div ref={canvasCardRef}>
               <div className="flex items-start gap-4">
@@ -295,7 +334,10 @@ function App() {
         )}
 
         {currentView === 'gallery' && (
-          <FrameGallery frames={frames} />
+          <FrameGallery
+            frames={frames}
+            pendingFrame={pendingFrameDataUrl ? { imageData: pendingFrameDataUrl, startedAt: sessionStartTs || Date.now() } : null}
+          />
         )}
 
         {currentView === 'video' && (

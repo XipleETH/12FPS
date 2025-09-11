@@ -27,6 +27,7 @@ interface SidePanelsProps {
   timeLeft?: number;
   isSessionActive?: boolean;
   onStartSession?: () => void;
+  onForceEnd?: () => void;
 }
 
 const PanelWrapper: React.FC<{
@@ -78,6 +79,7 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
   timeLeft,
   isSessionActive,
   onStartSession,
+  onForceEnd,
 }) => {
   const move = (key: PanelKey, dir: -1 | 1) => {
     const idx = order.indexOf(key);
@@ -123,6 +125,11 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
                   <button onClick={onStartSession} className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-500/80 hover:bg-green-500 text-white text-[11px] font-semibold">
                     <Play className="w-3.5 h-3.5" />
                     Start
+                  </button>
+                )}
+                {isSessionActive && (
+                  <button onClick={onForceEnd} className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/80 hover:bg-red-500 text-white text-[11px] font-semibold" title="Terminar sesión ahora">
+                    End
                   </button>
                 )}
               </div>

@@ -4,9 +4,10 @@ import { User, Calendar } from 'lucide-react';
 
 interface FrameGalleryProps {
   frames: Frame[];
+  pendingFrame?: { imageData: string; startedAt: number } | null;
 }
 
-export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames }) => {
+export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame }) => {
   const formatDate = (timestamp: number) => {
     return new Date(timestamp).toLocaleDateString('en-US', {
       month: 'short',
@@ -16,7 +17,7 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames }) => {
     });
   };
 
-  if (frames.length === 0) {
+  if (frames.length === 0 && !pendingFrame) {
     return (
       <div className="text-center py-16">
         <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-12 border border-white/20 max-w-md mx-auto">
@@ -35,11 +36,37 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames }) => {
       <div className="text-center">
         <h2 className="text-4xl font-bold text-white mb-4">Frame Gallery</h2>
         <p className="text-white/70 text-lg">
-          {frames.length} frames contributing to our collaborative masterpiece
+          {frames.length} frames published{pendingFrame ? ' • 1 in progress' : ''}
         </p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+        {pendingFrame && (
+          <div
+            className="relative bg-white/10 backdrop-blur-sm rounded-2xl overflow-hidden border border-yellow-400/40 hover:bg-white/20 transition-all duration-300"
+          >
+            <div className="aspect-square relative">
+              <img
+                src={pendingFrame.imageData}
+                alt="Pending frame"
+                className="w-full h-full object-cover opacity-90"
+              />
+              <div className="absolute top-2 left-2 bg-yellow-500/80 text-black text-xs font-bold px-2 py-1 rounded">
+                En progreso
+              </div>
+            </div>
+            <div className="p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-white font-bold">(día)</span>
+                <span className="text-white/60 text-sm">No publicado</span>
+              </div>
+              <div className="flex items-center space-x-2 text-white/70 text-sm">
+                <Calendar className="w-3 h-3" />
+                <span>{formatDate(pendingFrame.startedAt)}</span>
+              </div>
+            </div>
+          </div>
+        )}
         {frames.map((frame, index) => (
           <div
             key={frame.id}
