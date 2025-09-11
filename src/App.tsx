@@ -109,47 +109,26 @@ function App() {
 
   // Sube un dataURL al backend (solo cuando termina la sesión)
   async function uploadDataUrlPNG(dataUrl: string): Promise<{ url: string; key?: string } | null> {
-    // Convert dataURL to Blob
     try {
-      console.log('[upload] start convert dataURL');
-      const parts = dataUrl.split(',');
-      const base64 = parts[1];
-      const binary = atob(base64);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      const blob = new Blob([bytes], { type: 'image/png' });
-      try {
-        console.log('[upload] requesting signed url');
-        const resp = await fetch('/api/upload-url', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contentType: 'image/png', ext: 'png', prefix: 'frames' })
-        });
-  if (!resp.ok) {
-          const text = await resp.text();
-          console.error('[upload] signed url request failed', resp.status, text);
-          throw new Error('Failed to get signed URL');
-        }
-        const { signedUrl, publicUrl, key } = await resp.json();
-        console.log('[upload] got signed url', { key, hasPublic: !!publicUrl });
-        const put = await fetch(signedUrl, { method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: blob });
-  if (!put.ok) {
-          const text = await put.text();
-          console.error('[upload] put failed', put.status, text);
-          throw new Error('Upload failed');
-        }
-        console.log('[upload] put success');
-  setUploadDebug({ key, signedUrl, putStatus: 200 });
-        return { url: publicUrl || signedUrl.split('?')[0], key };
-      } catch (e) {
-  console.error('[upload] error (no fallback)', e);
-  setLastUploadError((e as any)?.message || 'upload error');
-  setUploadDebug(d => ({ ...(d||{}), putStatus: -1 }));
-  return null; // no fallback para ver fallo real
+      console.log('[upload] invoking /api/upload-frame');
+      const resp = await fetch('/api/upload-frame', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dataUrl, prefix: 'frames' })
+      });
+      if (!resp.ok) {
+        const text = await resp.text();
+        console.error('[upload] /api/upload-frame failed', resp.status, text);
+        setLastUploadError('upload-frame failed');
+        return null;
       }
-    } catch {
-      console.error('[upload] unexpected failure converting dataURL');
-      setLastUploadError('unexpected dataurl parse error');
+      const { key, url } = await resp.json();
+      setUploadDebug({ key, putStatus: 200 });
+      console.log('[upload] server stored frame', key);
+      return { key, url };
+    } catch (e) {
+      console.error('[upload] exception calling upload-frame', e);
+      setLastUploadError('exception upload-frame');
       return null;
     }
   }
