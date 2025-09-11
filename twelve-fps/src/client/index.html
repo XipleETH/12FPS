@@ -8,16 +8,7 @@
     />
     <title>12FPS WebView</title>
     <meta http-equiv="origin-trial" content="">
-    <script>
-      // Redirect logic: if we are framed inside Reddit, load the real app
-      (function(){
-        const target = 'https://12-fps.vercel.app/';
-        // If already at target or target already embedded, skip
-        if (location.href.startsWith(target)) return;
-        // Replace current document with target app
-        window.location.replace(target);
-      })();
-    </script>
+    <!-- Redirect script removed: now serving Reddit frame directly -->
   </head>
   <body class="h-full">
     <div id="root" class="h-full"></div>

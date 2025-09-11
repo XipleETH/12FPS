@@ -7,9 +7,10 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-  "preview": "vite preview",
-  "sync:devvit": "node tools/sync-devvit.mjs",
-  "deploy:reddit": "node tools/deploy-reddit.mjs"
+    "preview": "vite preview",
+    "sync:devvit": "node tools/sync-devvit.mjs",
+    "deploy:reddit": "node tools/deploy-reddit.mjs",
+    "deploy:devvit": "npm run build && npm run sync:devvit && cd twelve-fps && npm run build:server && npx devvit upload"
   },
   "dependencies": {
   "@aws-sdk/client-s3": "^3.645.0",
