@@ -54,6 +54,8 @@ function App() {
   const [frames, setFrames] = useState<Frame[]>([]);
   // Frame temporal (solo cache local durante la sesión)
   const [pendingFrameDataUrl, setPendingFrameDataUrl] = useState<string | null>(null);
+  // Estado para último error de subida
+  const [lastUploadError, setLastUploadError] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState<'draw' | 'gallery' | 'video' | 'voting' | 'chat'>('draw');
   const [timeLeft, setTimeLeft] = useState(7200); // 2 hours in seconds
   const [isSessionActive, setIsSessionActive] = useState(false);
@@ -108,6 +110,7 @@ function App() {
   async function uploadDataUrlPNG(dataUrl: string): Promise<{ url: string; key?: string } | null> {
     // Convert dataURL to Blob
     try {
+      console.log('[upload] start convert dataURL');
       const parts = dataUrl.split(',');
       const base64 = parts[1];
       const binary = atob(base64);
@@ -115,20 +118,35 @@ function App() {
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
       const blob = new Blob([bytes], { type: 'image/png' });
       try {
+        console.log('[upload] requesting signed url');
         const resp = await fetch('/api/upload-url', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ contentType: 'image/png', ext: 'png', prefix: 'frames' })
         });
-        if (!resp.ok) throw new Error('Failed to get signed URL');
+        if (!resp.ok) {
+          const text = await resp.text();
+          console.error('[upload] signed url request failed', resp.status, text);
+          throw new Error('Failed to get signed URL');
+        }
         const { signedUrl, publicUrl, key } = await resp.json();
+        console.log('[upload] got signed url', { key, hasPublic: !!publicUrl });
         const put = await fetch(signedUrl, { method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: blob });
-        if (!put.ok) throw new Error('Upload failed');
+        if (!put.ok) {
+          const text = await put.text();
+          console.error('[upload] put failed', put.status, text);
+          throw new Error('Upload failed');
+        }
+        console.log('[upload] put success');
         return { url: publicUrl || signedUrl.split('?')[0], key };
       } catch (e) {
+        console.error('[upload] falling back to dataUrl', e);
+        setLastUploadError((e as any)?.message || 'upload error');
         return { url: dataUrl };
       }
     } catch {
+      console.error('[upload] unexpected failure converting dataURL');
+      setLastUploadError('unexpected dataurl parse error');
       return null;
     }
   }
@@ -144,10 +162,32 @@ function App() {
   const finalizingRef = useRef(false);
   const finalizeSessionUpload = useCallback(async () => {
     if (finalizingRef.current) return; // guard duplicado
-    if (!pendingFrameDataUrl) return;
+    if (!pendingFrameDataUrl) {
+      // Intentar capturar automáticamente si el usuario nunca guardó
+      if (canvasRef.current) {
+        console.log('[finalize] no pending frame, capturando canvas actual');
+        try {
+          const autoUrl = canvasRef.current.toDataURL('image/png');
+          setPendingFrameDataUrl(autoUrl);
+          // seguir usando esa recien capturada
+        } catch (e) {
+          console.error('[finalize] error capturando canvas', e);
+          return;
+        }
+      } else {
+        console.warn('[finalize] no canvas ref para capturar');
+        return;
+      }
+    }
     finalizingRef.current = true;
     try {
-      const uploaded = await uploadDataUrlPNG(pendingFrameDataUrl);
+      const target = pendingFrameDataUrl || (canvasRef.current ? canvasRef.current.toDataURL('image/png') : null);
+      if (!target) {
+        console.error('[finalize] no frame data to upload');
+        return;
+      }
+      console.log('[finalize] iniciando subida frame final');
+      const uploaded = await uploadDataUrlPNG(target);
       if (!uploaded) return;
       const newFrame: Frame = {
         id: uploaded.key || Date.now().toString(),
@@ -163,6 +203,8 @@ function App() {
         return [...prev, newFrame];
       });
       setPendingFrameDataUrl(null);
+      setLastUploadError(null);
+      console.log('[finalize] subida exitosa');
     } finally {
       finalizingRef.current = false;
     }
@@ -373,6 +415,11 @@ function App() {
             frames={frames}
             pendingFrame={pendingFrameDataUrl ? { imageData: pendingFrameDataUrl, startedAt: sessionStartTs || Date.now() } : null}
           />
+        )}
+        {lastUploadError && (
+          <div className="mt-4 text-xs text-red-300 font-mono break-all">
+            upload error: {lastUploadError}
+          </div>
         )}
 
         {currentView === 'video' && (

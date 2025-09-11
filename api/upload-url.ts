@@ -36,11 +36,12 @@ export default async function handler(req: any, res: any) {
   try {
     checkEnv();
   } catch (e: any) {
+  console.error('[api/upload-url] env check failed', e?.message);
     return res.status(500).json({ error: e.message });
   }
 
   try {
-    const { contentType = 'image/png', ext = 'png', prefix = 'frames' } = (req.body || {});
+  const { contentType = 'image/png', ext = 'png', prefix = 'frames' } = (req.body || {});
     const bucket = process.env.R2_BUCKET!;
     const publicBase = process.env.R2_PUBLIC_BASE_URL; // e.g., https://cdn.example.com
 
@@ -52,10 +53,10 @@ export default async function handler(req: any, res: any) {
     const signedUrl = await getSignedUrl(client, cmd, { expiresIn: 900 });
 
     const publicUrl = publicBase ? `${publicBase.replace(/\/$/, '')}/${key}` : undefined;
-
-    return res.status(200).json({ signedUrl, key, publicUrl, bucket });
+  console.log('[api/upload-url] generated signed URL', { key, bucket, hasPublicBase: !!publicBase });
+  return res.status(200).json({ signedUrl, key, publicUrl, bucket });
   } catch (err: any) {
-    console.error('upload-url error', err);
+  console.error('[api/upload-url] error creating signed URL', err);
     return res.status(500).json({ error: 'Failed to create signed URL' });
   }
 }

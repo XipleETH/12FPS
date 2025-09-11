@@ -1,31 +1,38 @@
-import { S3Client, ListObjectsV2Command } from '@aws-sdk/client-s3';
-
-const requiredEnv = ['R2_ENDPOINT','R2_ACCESS_KEY_ID','R2_SECRET_ACCESS_KEY','R2_BUCKET'] as const;
-function ensure() { for (const k of requiredEnv) if (!process.env[k]) throw new Error(`Missing env var: ${k}`); }
-function client() { return new S3Client({ region: process.env.R2_REGION || 'auto', endpoint: process.env.R2_ENDPOINT!, forcePathStyle: true, credentials:{ accessKeyId: process.env.R2_ACCESS_KEY_ID!, secretAccessKey: process.env.R2_SECRET_ACCESS_KEY! } }); }
-function cors(res:any){res.setHeader('Access-Control-Allow-Origin','*');res.setHeader('Access-Control-Allow-Methods','GET,OPTIONS');res.setHeader('Access-Control-Allow-Headers','Content-Type');}
-
 export default async function handler(req:any,res:any){
-  cors(res);
+  res.setHeader('Access-Control-Allow-Origin','*');
+  res.setHeader('Access-Control-Allow-Methods','GET,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers','Content-Type');
   if(req.method==='OPTIONS') return res.status(204).end();
   if(req.method!=='GET') return res.status(405).json({error:'Method not allowed'});
-  try { ensure(); } catch(e:any){ return res.status(500).json({error:e.message}); }
+  const { R2_ENDPOINT, R2_BUCKET, R2_PUBLIC_BASE_URL } = process.env;
+  if(!R2_ENDPOINT || !R2_BUCKET){
+    return res.status(200).json({ frames: [] });
+  }
   try {
-    const c = client();
-    const bucket = process.env.R2_BUCKET!;
-    const cmd = new ListObjectsV2Command({ Bucket: bucket, Prefix: 'frames/' });
-    const out = await c.send(cmd);
-    const publicBase = process.env.R2_PUBLIC_BASE_URL?.replace(/\/$/,'');
-    const frames = (out.Contents||[])
-      .filter(obj=> obj.Key && obj.Key.endsWith('.png'))
-      .map(obj => {
-        const key = obj.Key!;
-        const url = publicBase ? `${publicBase}/${key}` : `${process.env.R2_ENDPOINT!.replace(/\/$/,'')}/${bucket}/${key}`;
-        return { key, url, lastModified: obj.LastModified ? new Date(obj.LastModified).getTime() : Date.now() };
-      });
-    return res.status(200).json({ frames });
-  } catch(err:any){
-    console.error('list-frames error', err);
-    return res.status(500).json({ error: 'List failed' });
+    const listUrl = `${R2_ENDPOINT.replace(/\/$/,'')}/${R2_BUCKET}?list-type=2&prefix=frames/`;
+    console.log('[api/list-frames] fetching', listUrl);
+    const resp = await fetch(listUrl);
+    if(!resp.ok){
+      console.error('[api/list-frames] non-ok status', resp.status);
+      return res.status(200).json({ frames: [] });
+    }
+    const xml = await resp.text();
+    console.log('[api/list-frames] xml length', xml.length);
+    const regex = /<Contents>\s*<Key>(.*?)<\/Key>[\s\S]*?<LastModified>(.*?)<\/LastModified>/g;
+    const frames:any[] = [];
+    let m:RegExpExecArray|null;
+    while((m = regex.exec(xml))){
+      const key = m[1];
+      if(!key.endsWith('.png')) continue;
+      const lastModified = Date.parse(m[2]) || Date.now();
+      const url = R2_PUBLIC_BASE_URL ? `${R2_PUBLIC_BASE_URL.replace(/\/$/,'')}/${key}` : `${R2_ENDPOINT.replace(/\/$/,'')}/${R2_BUCKET}/${key}`;
+      frames.push({ key, url, lastModified });
+    }
+    frames.sort((a,b)=>a.lastModified-b.lastModified);
+    console.log('[api/list-frames] returning frames', frames.length);
+    res.status(200).json({ frames });
+  } catch(e){
+    console.error('[api/list-frames] error', e);
+    res.status(200).json({ frames: [] });
   }
 }

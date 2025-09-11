@@ -29,10 +29,11 @@ export default async function handler(req: any, res: any) {
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  try { ensureEnv(); } catch (e: any) { return res.status(500).json({ error: e.message }); }
+  try { ensureEnv(); } catch (e: any) { console.error('[api/cache-frame] env error', e?.message); return res.status(500).json({ error: e.message }); }
 
   const { dataUrl } = req.body || {};
   if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/png;base64,')) {
+    console.error('[api/cache-frame] invalid dataUrl');
     return res.status(400).json({ error: 'Invalid dataUrl' });
   }
 
@@ -45,7 +46,8 @@ export default async function handler(req: any, res: any) {
     const buffer = Buffer.from(base64, 'base64');
 
     const client = makeClient();
-    await client.send(new PutObjectCommand({
+  console.log('[api/cache-frame] putting object', { key });
+  await client.send(new PutObjectCommand({
       Bucket: process.env.R2_BUCKET!,
       Key: key,
       Body: buffer,
@@ -56,9 +58,10 @@ export default async function handler(req: any, res: any) {
     const publicBase = process.env.R2_PUBLIC_BASE_URL?.replace(/\/$/, '');
     const url = publicBase ? `${publicBase}/${key}` : `${process.env.R2_ENDPOINT!.replace(/\/$/, '')}/${process.env.R2_BUCKET!}/${key}`;
 
-    return res.status(200).json({ ok: true, key, url });
+  console.log('[api/cache-frame] success', { key });
+  return res.status(200).json({ ok: true, key, url });
   } catch (err: any) {
-    console.error('cache-frame error', err);
+  console.error('[api/cache-frame] error', err);
     return res.status(500).json({ error: 'Upload failed' });
   }
 }
