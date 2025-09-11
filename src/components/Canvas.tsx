@@ -20,12 +20,13 @@ interface CanvasProps {
   onionOpacity?: number; // 0..1
 }
 
-const FIXED_WIDTH = 540; // nuevo tamaño solicitado
-const FIXED_HEIGHT = 740;
+// Default fallback size (desktop)
+const DEFAULT_WIDTH = 540;
+const DEFAULT_HEIGHT = 740;
 
 export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
   ({ activeColor, brushSize, isDrawing, setIsDrawing, disabled, brushMode = 'solid', brushPreset, tool = 'draw', onBeforeMutate, zoom: controlledZoom, onionImage, onionOpacity = 0.4 }, ref) => {
-    const internalRef = useRef<HTMLCanvasElement>(null);
+  const internalRef = useRef<HTMLCanvasElement>(null);
     const canvasRef = (ref as React.RefObject<HTMLCanvasElement>) || internalRef;
     const lastPointRef = useRef<{ x: number; y: number } | null>(null);
     const strokeProgressRef = useRef<number>(0); // para modo fade
@@ -38,21 +39,52 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
   const activeDrawPointerIdRef = useRef<number | null>(null);
   const activePanPointerIdRef = useRef<number | null>(null);
 
-  useEffect(() => {
+    // Responsive size (full viewport on mobile)
+    const [displaySize, setDisplaySize] = useState<{w:number;h:number}>({ w: DEFAULT_WIDTH, h: DEFAULT_HEIGHT });
+    const isMobile = () => window.innerWidth < 768;
+    useEffect(() => {
+      const update = () => {
+        if (isMobile()) {
+          // Use full visual viewport height if available (accounts for mobile URL bar)
+          const vv = (window as any).visualViewport;
+          const height = vv ? vv.height : window.innerHeight;
+          setDisplaySize({ w: window.innerWidth, h: height });
+        } else {
+          setDisplaySize({ w: DEFAULT_WIDTH, h: DEFAULT_HEIGHT });
+        }
+      };
+      update();
+      window.addEventListener('resize', update);
+      if ((window as any).visualViewport) {
+        (window as any).visualViewport.addEventListener('resize', update);
+      }
+      return () => {
+        window.removeEventListener('resize', update);
+        if ((window as any).visualViewport) {
+          (window as any).visualViewport.removeEventListener('resize', update);
+        }
+      };
+    }, []);
+
+    // Initialize & resize canvas backing store when displaySize changes (only once content empty)
+    useEffect(() => {
       const canvas = canvasRef.current;
       if (!canvas) return;
-
+      const dpr = Math.min(3, window.devicePixelRatio || 1); // cap dpr for memory
+      const logicalW = displaySize.w;
+      const logicalH = displaySize.h;
+      // Resize backing store; this clears content
+      canvas.width = Math.round(logicalW * dpr);
+      canvas.height = Math.round(logicalH * dpr);
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = FIXED_WIDTH * dpr;
-      canvas.height = FIXED_HEIGHT * dpr;
+      ctx.setTransform(1,0,0,1,0,0);
       ctx.scale(dpr, dpr);
       ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, FIXED_WIDTH, FIXED_HEIGHT);
+      ctx.fillRect(0, 0, logicalW, logicalH);
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
-    }, []);
+    }, [displaySize.w, displaySize.h]);
 
   // mouse pos helper removed (pointer events compute directly)
 
@@ -233,8 +265,8 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       const dpr = window.devicePixelRatio || 1;
-      const w = canvas.width; // already in device pixels
-      const h = canvas.height;
+  const w = canvas.width; // device px
+  const h = canvas.height;
       // Logical -> device pixel coords
       const sx = Math.floor(x * dpr);
       const sy = Math.floor(y * dpr);
@@ -588,34 +620,31 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
     return (
       <div
         ref={containerRef}
-        className="relative border rounded-lg bg-white inline-block overflow-auto"
-        style={{ width: FIXED_WIDTH, height: FIXED_HEIGHT }}
+        className="relative border rounded-lg bg-white inline-block overflow-hidden"
+        style={{ width: displaySize.w, height: displaySize.h }}
       >
         <div
           className="relative"
-          style={{ width: FIXED_WIDTH * zoom, height: FIXED_HEIGHT * zoom }}
+          style={{ width: displaySize.w * zoom, height: displaySize.h * zoom }}
         >
           {onionImage && (
             <img
               src={onionImage}
               alt="previous frame"
               className="absolute inset-0 pointer-events-none"
-              style={{ width: '100%', height: '100%', objectFit: 'fill', opacity: Math.max(0, Math.min(1, onionOpacity)) }}
+              style={{ width: '100%', height: '100%', objectFit: 'fill', opacity: 1 }}
             />
           )}
-          <canvas
+      <canvas
             ref={canvasRef}
-            width={FIXED_WIDTH}
-            height={FIXED_HEIGHT}
             className={`${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-crosshair'} absolute inset-0 bg-white select-none`}
             data-drawing={isDrawing ? 'true' : 'false'}
             style={{
               width: '100%',
               height: '100%',
-              // Bloquear gestos del navegador; pan táctil gestionado por pointer events
-              touchAction: 'none'
+        touchAction: 'none',
+        opacity: 1 - Math.max(0, Math.min(1, onionOpacity))
             }}
-            // mouse handled via pointer events
             onTouchStart={handleTouchStart}
             onTouchMove={handleTouchMove}
             onTouchEnd={handleTouchEnd}

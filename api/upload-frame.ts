@@ -24,6 +24,18 @@ export default async function handler(req:any,res:any){
   }
 
   try {
+    if(!process.env.R2_ENDPOINT){
+      console.error('[api/upload-frame] missing R2_ENDPOINT');
+    }
+    if(!process.env.R2_ACCESS_KEY_ID){
+      console.error('[api/upload-frame] missing R2_ACCESS_KEY_ID');
+    }
+    if(!process.env.R2_SECRET_ACCESS_KEY){
+      console.error('[api/upload-frame] missing R2_SECRET_ACCESS_KEY');
+    }
+    if(!process.env.R2_BUCKET){
+      console.error('[api/upload-frame] missing R2_BUCKET');
+    }
     const base64 = dataUrl.split(',')[1];
     const buffer = Buffer.from(base64,'base64');
     const id = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2,8);
@@ -50,7 +62,8 @@ export default async function handler(req:any,res:any){
   console.log('[api/upload-frame] stored', { key, size: buffer.length, viaProxy: !publicBase });
   return res.status(200).json({ ok:true, key, url, viaProxy: !publicBase });
   } catch(e:any){
-    console.error('[api/upload-frame] error', e?.message || e);
-    return res.status(500).json({ error:'Upload failed' });
+    const msg = e?.message || String(e);
+    console.error('[api/upload-frame] error', msg, e?.stack);
+    return res.status(500).json({ error:'Upload failed', message: msg });
   }
 }

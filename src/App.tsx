@@ -20,31 +20,38 @@ export interface Frame {
 }
 
 function App() {
+  // Producción (Vercel) origin – ajustar si cambia tu dominio
+  const PROD_ORIGIN = 'https://12-fps.vercel.app';
+  const PROD_HOST = '12-fps.vercel.app';
+  // Si NO estamos ya en el host de producción (ej: localhost, frame en reddit, cualquier otro dominio) usamos el origin absoluto
+  const API_BASE = (typeof window !== 'undefined' && window.location.hostname === PROD_HOST) ? '' : PROD_ORIGIN;
+  // Prefija solo rutas /api/ cuando necesitamos origen absoluto
+  const prefixIfLocal = (url: string) => {
+    if (!API_BASE) return url; // ya estamos en prod host => relativo funciona
+    if (url.startsWith('/api/')) return API_BASE + url;
+    return url;
+  };
   // Iframe embedding detection
-  const [isEmbedded, setIsEmbedded] = useState(false);
+  const [isEmbedded, setIsEmbedded] = useState<boolean>(() => {
+    try { return typeof window !== 'undefined' && window.self !== window.top; } catch { return false; }
+  });
   const [embedContext, setEmbedContext] = useState<string>('');
+  const [embedReady, setEmbedReady] = useState(false);
 
   useEffect(() => {
     try {
       const embedded = window.self !== window.top;
       setIsEmbedded(embedded);
-      
       if (embedded) {
-        // Try to detect the parent origin for context
         try {
-          const parentUrl = document.referrer || 'unknown';
-          if (parentUrl.includes('reddit.com')) {
-            setEmbedContext('reddit');
-          } else {
-            setEmbedContext('iframe');
-          }
-        } catch (e) {
-          setEmbedContext('iframe');
-        }
+          const parentUrl = document.referrer || '';
+          if (parentUrl.includes('reddit.com')) setEmbedContext('reddit'); else setEmbedContext('iframe');
+        } catch { setEmbedContext('iframe'); }
+      } else {
+        setEmbedContext('');
       }
-    } catch (e) {
-      // Fallback if iframe detection fails
-      setIsEmbedded(false);
+    } finally {
+      setEmbedReady(true);
     }
   }, []);
 
@@ -107,28 +114,62 @@ function App() {
   setSessionStartTs(Date.now());
   };
 
-  // Sube un dataURL al backend (solo cuando termina la sesión)
+  // Sube un dataURL al backend (con soporte interno Reddit /r2/upload-frame)
   async function uploadDataUrlPNG(dataUrl: string): Promise<{ url: string; key?: string } | null> {
     try {
-      console.log('[upload] invoking /api/upload-frame');
-      const resp = await fetch('/api/upload-frame', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dataUrl, prefix: 'frames' })
-      });
-      if (!resp.ok) {
-        const text = await resp.text();
-        console.error('[upload] /api/upload-frame failed', resp.status, text);
-        setLastUploadError('upload-frame failed');
+      const isReddit = isEmbedded && embedContext === 'reddit';
+      if (isReddit) {
+        // Intenta varias rutas porque la plataforma puede exponer el server con distintos prefijos
+        const candidates = [
+          '/api/r2/upload-frame', // preferido si /api/* está expuesto
+          '/r2/upload-frame',     // ruta directa (puede mapear a /webapi/r2/...)
+          '/webapi/r2/upload-frame' // en caso de que el host no reescriba automáticamente
+        ];
+        for (const p of candidates) {
+          try {
+            console.log('[upload:reddit] try', p);
+            const r = await fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dataUrl }) });
+            if (!r.ok) { 
+              console.log('[upload:reddit] status', p, r.status); 
+              // Log response body for debugging 500 errors
+              try {
+                const errorText = await r.text();
+                console.log('[upload:reddit] error body', p, errorText);
+              } catch {}
+              continue; 
+            }
+            const j = await r.json();
+            if (j && !j.error) {
+              console.log('[upload:reddit] success via', p);
+              setUploadDebug({ key: j.key, putStatus: 200 });
+              setLastUploadError(null);
+              return { key: j.key, url: j.url };
+            }
+          } catch (e) { console.log('[upload:reddit] exception', p, (e as any)?.message); }
+        }
+        setLastUploadError('reddit internal upload failed (all candidates 404)');
         return null;
       }
-      const { key, url } = await resp.json();
+      console.log('[upload] invoking /api/upload-frame');
+      const resp = await fetch(`${API_BASE}/api/upload-frame`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dataUrl, prefix: 'frames' }) });
+      if (!resp.ok) {
+        let detail = '';
+        try { detail = await resp.text(); } catch {}
+        setLastUploadError(`upload-frame failed ${resp.status} ${detail.slice(0,140)}`);
+        return null;
+      }
+      const json = await resp.json();
+      if (json.error) {
+        setLastUploadError(`upload error: ${json.message || json.error}`);
+        return null;
+      }
+      const { key, url } = json;
+      const finalUrl = prefixIfLocal(url);
       setUploadDebug({ key, putStatus: 200 });
-      console.log('[upload] server stored frame', key);
-      return { key, url };
+      setLastUploadError(null);
+      return { key, url: finalUrl };
     } catch (e) {
-      console.error('[upload] exception calling upload-frame', e);
-      setLastUploadError('exception upload-frame');
+      setLastUploadError(`exception upload-frame: ${(e as any)?.message || e}`);
       return null;
     }
   }
