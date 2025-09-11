@@ -11,11 +11,12 @@ import { ZoomIn, ZoomOut, Layers } from 'lucide-react';
 // Brush presets removed; no brush imports needed
 
 export interface Frame {
-  id: string;
-  imageData: string;
-  timestamp: number;
-  artist: string;
+  id: string; // unique id (could be key or generated)
+  imageData: string; // public URL or data URL
+  timestamp: number; // ms epoch
+  artist: string; // placeholder if unknown
   paletteWeek: number;
+  key?: string; // storage key (frames/...)
 }
 
 function App() {
@@ -140,28 +141,38 @@ function App() {
   }, [isSessionActive]);
 
   // Al finalizar la sesión se sube la última imagen cacheada
+  const finalizingRef = useRef(false);
   const finalizeSessionUpload = useCallback(async () => {
+    if (finalizingRef.current) return; // guard duplicado
     if (!pendingFrameDataUrl) return;
-    const uploaded = await uploadDataUrlPNG(pendingFrameDataUrl);
-    if (!uploaded) return;
-    const newFrame: Frame = {
-      id: Date.now().toString(),
-      imageData: uploaded.url,
-      timestamp: Date.now(),
-      artist: `Artist ${Math.floor(Math.random() * 100)}`,
-      paletteWeek: currentWeek
-    };
-    setFrames(prev => [...prev, newFrame]);
-    setPendingFrameDataUrl(null);
+    finalizingRef.current = true;
+    try {
+      const uploaded = await uploadDataUrlPNG(pendingFrameDataUrl);
+      if (!uploaded) return;
+      const newFrame: Frame = {
+        id: uploaded.key || Date.now().toString(),
+        key: uploaded.key,
+        imageData: uploaded.url,
+        timestamp: Date.now(),
+        artist: `Artist ${Math.floor(Math.random() * 100)}`,
+        paletteWeek: currentWeek
+      };
+      setFrames(prev => {
+        // Evitar duplicados por key
+        if (newFrame.key && prev.some(f => f.key === newFrame.key)) return prev;
+        return [...prev, newFrame];
+      });
+      setPendingFrameDataUrl(null);
+    } finally {
+      finalizingRef.current = false;
+    }
   }, [pendingFrameDataUrl, currentWeek]);
 
   const forceEndSession = useCallback(() => {
     if (!isSessionActive) return;
     setIsSessionActive(false);
-    setTimeLeft(0);
-    // finalizeSessionUpload will run via effect OR call directly for immediacy
-    finalizeSessionUpload();
-  }, [isSessionActive, finalizeSessionUpload]);
+    setTimeLeft(0); // el effect se encargará de finalizar
+  }, [isSessionActive]);
 
   // Detectar fin de sesión (timer llega a 0)
   const prevIsActiveRef = useRef(isSessionActive);
@@ -171,6 +182,30 @@ function App() {
     }
     prevIsActiveRef.current = isSessionActive;
   }, [isSessionActive, timeLeft, finalizeSessionUpload]);
+
+  // Cargar frames existentes desde el backend (R2 listing)
+  useEffect(() => {
+    (async () => {
+      try {
+        const resp = await fetch('/api/list-frames');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (Array.isArray(data.frames)) {
+          const loaded: Frame[] = data.frames.map((o: any) => ({
+            id: o.key || o.id || o.key || Math.random().toString(36).slice(2),
+            key: o.key,
+            imageData: o.url,
+            timestamp: o.lastModified || Date.now(),
+            artist: o.artist || 'Artist',
+            paletteWeek: currentWeek
+          }));
+          setFrames(loaded);
+        }
+      } catch (e) {
+        // silent
+      }
+    })();
+  }, [currentWeek]);
 
   const clearCanvas = () => {
     if (!canvasRef.current) return;
