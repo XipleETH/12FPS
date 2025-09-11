@@ -219,8 +219,12 @@ function App() {
   const forceEndSession = useCallback(() => {
     if (!isSessionActive) return;
     setIsSessionActive(false);
-    setTimeLeft(0); // el effect se encargará de finalizar
-  }, [isSessionActive]);
+    setTimeLeft(0);
+    // Disparar finalize explícitamente además del effect (guard previene duplicado)
+    setTimeout(() => {
+      finalizeSessionUpload();
+    }, 0);
+  }, [isSessionActive, finalizeSessionUpload]);
 
   // Detectar fin de sesión (timer llega a 0)
   const prevIsActiveRef = useRef(isSessionActive);
