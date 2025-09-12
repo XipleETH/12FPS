@@ -232,7 +232,8 @@ export const PaletteVoting: React.FC = () => {
               </div>
             </div>
             <div className="mt-4 flex gap-2">
-              <button disabled={!canSubmitPalette || !username} onClick={submitPalette} className={`px-4 py-2 rounded-lg font-semibold ${canSubmitPalette && username ? 'bg-emerald-500 hover:bg-emerald-600 text-white' : 'bg-white/10 text-white/50 cursor-not-allowed'}`}>{username ? 'Submit' : 'Login required'}</button>
+              {/* Allow anonymous submission (server will record as 'anonymous' if no username) */}
+              <button disabled={!canSubmitPalette} onClick={submitPalette} className={`px-4 py-2 rounded-lg font-semibold ${canSubmitPalette ? 'bg-emerald-500 hover:bg-emerald-600 text-white' : 'bg-white/10 text-white/50 cursor-not-allowed'}`}>Submit</button>
               <button onClick={() => setNewPaletteColors(['#FF6B6B','#4ECDC4','#45B7D1','#96CEB4','#FFEAA7','#DDA0DD'])} className="px-3 py-2 text-xs rounded-md bg-white/5 border border-white/10 text-white/60 hover:bg-white/10">Reset</button>
             </div>
           </section>
@@ -276,7 +277,7 @@ export const PaletteVoting: React.FC = () => {
             {sectionHeader('Propose theme')}
             <div className="flex gap-2">
               <input value={newThemeTitle} onChange={e => setNewThemeTitle(e.target.value)} placeholder="e.g., Retro Future" className="flex-1 px-3 py-2 rounded-md bg-white/10 border border-white/20 text-white placeholder-white/40" />
-              <button disabled={!canSubmitTheme || !username} onClick={submitTheme} className={`px-4 py-2 rounded-lg font-semibold ${canSubmitTheme && username ? 'bg-emerald-500 hover:bg-emerald-600 text-white' : 'bg-white/10 text-white/50 cursor-not-allowed'}`}>{username ? 'Submit' : 'Login required'}</button>
+              <button disabled={!canSubmitTheme} onClick={submitTheme} className={`px-4 py-2 rounded-lg font-semibold ${canSubmitTheme ? 'bg-emerald-500 hover:bg-emerald-600 text-white' : 'bg-white/10 text-white/50 cursor-not-allowed'}`}>Submit</button>
             </div>
           </section>
           <section>
@@ -324,7 +325,7 @@ export const PaletteVoting: React.FC = () => {
                 );
               })}
             </div>
-            <button disabled={!canSubmitModes || !username} onClick={submitModes} className={`px-4 py-2 rounded-lg font-semibold ${canSubmitModes && username ? 'bg-emerald-500 hover:bg-emerald-600 text-white' : 'bg-white/10 text-white/50 cursor-not-allowed'}`}>{username ? 'Submit' : 'Login required'}</button>
+            <button disabled={!canSubmitModes} onClick={submitModes} className={`px-4 py-2 rounded-lg font-semibold ${canSubmitModes ? 'bg-emerald-500 hover:bg-emerald-600 text-white' : 'bg-white/10 text-white/50 cursor-not-allowed'}`}>Submit</button>
           </section>
           <section>
             <h3 className="text-xl font-bold text-white mb-3">Proposed brush kits</h3>
@@ -374,7 +375,7 @@ export const PaletteVoting: React.FC = () => {
       <div className="bg-gradient-to-r from-purple-500/20 to-pink-500/20 backdrop-blur-sm rounded-2xl p-6 border border-white/20">
         <h3 className="text-xl font-bold text-white mb-2">Community Guidelines</h3>
         <p className="text-white/80">Vote for palettes, themes, and brush kits that enhance collaboration and visual harmony. Consider accessibility, stylistic flexibility, and creative potential. Your participation shapes the direction of the project.</p>
-        <p className="text-white/40 text-xs mt-2">Logged in as: {username ? `u/${username}` : 'anonymous / not logged in'}</p>
+  <p className="text-white/40 text-xs mt-2">Logged in as: {username ? `u/${username}` : 'anonymous / not logged in (you can still submit proposals)'}</p>
       </div>
     </div>
   );

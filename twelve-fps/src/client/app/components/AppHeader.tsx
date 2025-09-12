@@ -16,7 +16,7 @@ const navItems: Array<{k: AppHeaderProps['currentView']; label: string; icon: Re
 
 export const AppHeader: React.FC<AppHeaderProps> = ({ currentView, setCurrentView }) => {
   return (
-    <aside className="group/side fixed top-0 left-0 h-screen w-[56px] hover:w-48 transition-all duration-300 flex flex-col bg-white/10 backdrop-blur-xl border-r border-white/20 shadow-xl z-40 overflow-hidden">
+  <aside className="group/side fixed top-0 left-0 h-screen w-[56px] hover:w-[140px] transition-all duration-300 flex flex-col bg-white/10 backdrop-blur-xl border-r border-white/20 shadow-xl z-40 overflow-hidden">
       <div className="flex items-center gap-2 px-3 py-4 select-none border-b border-white/10">
         <div className="w-9 h-9 bg-gradient-to-tr from-purple-500 via-fuchsia-500 to-pink-500 rounded-xl flex items-center justify-center shadow-inner">
           <PaletteIcon className="w-4 h-4 text-white" />
@@ -33,8 +33,8 @@ export const AppHeader: React.FC<AppHeaderProps> = ({ currentView, setCurrentVie
               className={`group/item relative flex items-center rounded-md px-3 py-2 text-sm font-medium border transition outline-none focus:ring-2 focus:ring-white/50 ${active ? 'bg-white/25 border-white/60 text-white shadow-inner' : 'bg-white/10 border-white/20 text-white/70 hover:bg-white/20 hover:text-white'}`}
               aria-label={label}
             >
-              <Icon className={`w-5 h-5 ${active ? 'text-white' : 'text-white/70 group-hover:item:text-white'} transition-colors`} />
-              <span className="ml-2 whitespace-nowrap opacity-0 group-hover/side:opacity-100 transition-opacity duration-200">{label}</span>
+              <Icon className={`w-5 h-5 flex-shrink-0 ${active ? 'text-white' : 'text-white/70 group-hover:item:text-white'} transition-colors`} />
+              <span className="ml-2 whitespace-nowrap overflow-hidden w-0 opacity-0 group-hover/side:w-auto group-hover/side:opacity-100 transition-all duration-200">{label}</span>
               <span className="pointer-events-none absolute left-full top-1/2 -translate-y-1/2 ml-2 px-2 py-1 rounded bg-black/70 text-white text-xs opacity-0 group-hover/side:opacity-0 group-hover/item:opacity-100 transition-opacity duration-200">{label}</span>
             </button>
           );
