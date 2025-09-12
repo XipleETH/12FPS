@@ -36,7 +36,6 @@ function App() {
     try { return typeof window !== 'undefined' && window.self !== window.top; } catch { return false; }
   });
   const [embedContext, setEmbedContext] = useState<string>('');
-  const [embedReady, setEmbedReady] = useState(false);
 
   useEffect(() => {
     try {
@@ -50,8 +49,8 @@ function App() {
       } else {
         setEmbedContext('');
       }
-    } finally {
-      setEmbedReady(true);
+    } catch {
+      // ignore
     }
   }, []);
 
@@ -317,12 +316,7 @@ function App() {
 
   return (
     <div className={`min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-violet-900 ${isEmbedded ? 'embedded-mode' : ''}`}>
-      {/* Embedding indicator for Reddit */}
-      {isEmbedded && embedContext === 'reddit' && (
-        <div className="bg-orange-500/90 text-white text-xs px-3 py-1 text-center font-medium">
-          🎨 Running in Reddit • Full experience at 12-fps.vercel.app
-        </div>
-      )}
+  {/* Removed Reddit embedding banner per request */}
       
   <Header currentView={currentView} setCurrentView={setCurrentView} />
   <div className="max-w-6xl mx-auto px-3 pb-4">
