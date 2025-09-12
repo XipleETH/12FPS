@@ -60,6 +60,10 @@ function App() {
   const [frames, setFrames] = useState<Frame[]>([]);
   // Frame temporal (solo cache local durante la sesión)
   const [pendingFrameDataUrl, setPendingFrameDataUrl] = useState<string | null>(null);
+  // Estado persistente del canvas (dataURL)
+  const [canvasState, setCanvasState] = useState<string | null>(null);
+  const LOCAL_CANVAS_KEY = 'currentDrawingDataURL_v1';
+  const [restoredOnce, setRestoredOnce] = useState(false);
   // Estado para último error de subida
   const [lastUploadError, setLastUploadError] = useState<string | null>(null);
   const [uploadDebug, setUploadDebug] = useState<{ key?: string; signedUrl?: string; putStatus?: number } | null>(null);
@@ -112,6 +116,90 @@ function App() {
     setPendingFrameDataUrl(null);
   setSessionStartTs(Date.now());
   };
+
+  // --- Persistencia Canvas ---
+  // Restaurar desde localStorage al montar (una vez)
+  useEffect(() => {
+    if (restoredOnce) return;
+    try {
+      const stored = localStorage.getItem(LOCAL_CANVAS_KEY);
+      if (stored) {
+        setCanvasState(stored);
+      }
+      setRestoredOnce(true);
+    } catch {}
+  }, [restoredOnce]);
+
+  // Guardar snapshot periódico mientras se dibuja (cada 2s)
+  useEffect(() => {
+    if (!isSessionActive) return;
+    if (currentView !== 'draw') return; // solo mientras está visible
+    const id = setInterval(() => {
+      if (!canvasRef.current) return;
+      try {
+        const dataUrl = canvasRef.current.toDataURL('image/png');
+        setCanvasState(dataUrl);
+        localStorage.setItem(LOCAL_CANVAS_KEY, dataUrl);
+      } catch {}
+    }, 2000);
+    return () => clearInterval(id);
+  }, [isSessionActive, currentView]);
+
+  // Guardar al salir de la vista draw
+  useEffect(() => {
+    if (currentView !== 'draw') {
+      if (canvasRef.current) {
+        try {
+          const dataUrl = canvasRef.current.toDataURL('image/png');
+          setCanvasState(dataUrl);
+          localStorage.setItem(LOCAL_CANVAS_KEY, dataUrl);
+        } catch {}
+      }
+    }
+  }, [currentView]);
+
+  // Restaurar al entrar a draw si existe canvasState
+  useEffect(() => {
+    if (currentView !== 'draw') return;
+    if (!canvasState) return;
+    // Forzamos un pequeño delay para asegurar que el canvas existe y mida correctamente
+    const t = setTimeout(() => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      const img = new Image();
+      img.onload = () => {
+        try {
+          ctx.save();
+          ctx.setTransform(1,0,0,1,0,0);
+          ctx.clearRect(0,0,canvas.width,canvas.height);
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0,0,canvas.width,canvas.height);
+          ctx.drawImage(img,0,0,canvas.width,canvas.height);
+          ctx.restore();
+        } catch {}
+      };
+      img.src = canvasState;
+    }, 120);
+    return () => clearTimeout(t);
+  }, [currentView, canvasState]);
+
+  // Antes de cerrar / recargar pestaña
+  useEffect(() => {
+    const handler = () => {
+      if (!canvasRef.current) return;
+      try {
+        const dataUrl = canvasRef.current.toDataURL('image/png');
+        localStorage.setItem(LOCAL_CANVAS_KEY, dataUrl);
+      } catch {}
+    };
+    window.addEventListener('beforeunload', handler);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) handler(); });
+    return () => {
+      window.removeEventListener('beforeunload', handler);
+    };
+  }, []);
 
   // Sube un dataURL al backend (con soporte interno Reddit /r2/upload-frame)
   async function uploadDataUrlPNG(dataUrl: string): Promise<{ url: string; key?: string } | null> {
@@ -303,6 +391,12 @@ function App() {
       next.push(img);
       return next;
     });
+    // Persistir inmediatamente tras mutación
+    try {
+      const dataUrl = canvasRef.current.toDataURL('image/png');
+      setCanvasState(dataUrl);
+      localStorage.setItem(LOCAL_CANVAS_KEY, dataUrl);
+    } catch {}
   };
 
   const undo = () => {
@@ -394,6 +488,7 @@ function App() {
                     zoom={zoom}
                     onionImage={frames.length ? frames[frames.length-1].imageData : undefined}
                     onionOpacity={onionOpacity}
+                    initialImage={canvasState || undefined}
                   />
                 </div>
                 {paletteSide === 'left' && (

@@ -18,6 +18,8 @@ interface CanvasProps {
   // Onion skin (previous frame) overlay
   onionImage?: string;
   onionOpacity?: number; // 0..1
+  // Optional initial image (dataURL) to paint when mounting / resizing if blank
+  initialImage?: string;
 }
 
 // Default fallback size (desktop)
@@ -25,7 +27,7 @@ const DEFAULT_WIDTH = 540;
 const DEFAULT_HEIGHT = 740;
 
 export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
-  ({ activeColor, brushSize, isDrawing, setIsDrawing, disabled, brushMode = 'solid', brushPreset, tool = 'draw', onBeforeMutate, zoom: controlledZoom, onionImage, onionOpacity = 0.4 }, ref) => {
+  ({ activeColor, brushSize, isDrawing, setIsDrawing, disabled, brushMode = 'solid', brushPreset, tool = 'draw', onBeforeMutate, zoom: controlledZoom, onionImage, onionOpacity = 0.4, initialImage }, ref) => {
   const internalRef = useRef<HTMLCanvasElement>(null);
     const canvasRef = (ref as React.RefObject<HTMLCanvasElement>) || internalRef;
     const lastPointRef = useRef<{ x: number; y: number } | null>(null);
@@ -66,7 +68,7 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
       };
     }, []);
 
-    // Initialize & resize canvas backing store when displaySize changes (only once content empty)
+    // Initialize & resize canvas backing store when displaySize changes
     useEffect(() => {
       const canvas = canvasRef.current;
       if (!canvas) return;
@@ -84,7 +86,37 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
       ctx.fillRect(0, 0, logicalW, logicalH);
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
-    }, [displaySize.w, displaySize.h]);
+      if (initialImage) {
+        try {
+          const img = new Image();
+          img.onload = () => {
+            try { ctx.drawImage(img, 0, 0, logicalW, logicalH); } catch {}
+          };
+          img.src = initialImage;
+        } catch {}
+      }
+    }, [displaySize.w, displaySize.h, initialImage]);
+
+    // If initialImage changes later (e.g., user navigó fuera y volvió) repintar si no está dibujando
+    useEffect(() => {
+      if (!initialImage) return;
+      if (isDrawing) return;
+      const canvas = canvasRef.current; if (!canvas) return;
+      const ctx = canvas.getContext('2d'); if (!ctx) return;
+      const img = new Image();
+      img.onload = () => {
+        try {
+          ctx.save();
+          ctx.setTransform(1,0,0,1,0,0);
+          ctx.clearRect(0,0,canvas.width,canvas.height);
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0,0,canvas.width,canvas.height);
+          ctx.drawImage(img,0,0,canvas.width,canvas.height);
+          ctx.restore();
+        } catch {}
+      };
+      img.src = initialImage;
+    }, [initialImage, isDrawing]);
 
   // mouse pos helper removed (pointer events compute directly)
 
