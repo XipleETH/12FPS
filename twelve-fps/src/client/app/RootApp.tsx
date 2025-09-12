@@ -22,6 +22,11 @@ const RootApp: React.FC = () => {
   const [currentView, setCurrentView] = useState<'draw' | 'gallery' | 'video' | 'voting' | 'chat'>('draw');
   const [timeLeft, setTimeLeft] = useState(7200);
   const [isSessionActive, setIsSessionActive] = useState(false);
+  const [username, setUsername] = useState<string | null>(null);
+  const [sessionOwner, setSessionOwner] = useState<string | null>(null);
+  const [restoredImage, setRestoredImage] = useState<string | null>(null);
+  const lastSavedRef = useRef<string | null>(null);
+  const sessionOwned = !!username && username === sessionOwner;
   const [currentWeek] = useState(1);
   const [paletteSide, setPaletteSide] = useState<'left' | 'right'>('right');
   const [brushMode, setBrushMode] = useState<'solid' | 'soft' | 'fade' | 'spray'>('solid');
@@ -38,12 +43,42 @@ const RootApp: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [undoStack, setUndoStack] = useState<ImageData[]>([]);
   useEffect(()=>{ let id:number; if(isSessionActive && timeLeft>0){ id=window.setInterval(()=>{ setTimeLeft(p=>{ if(p<=1){ setIsSessionActive(false); return 0;} return p-1;}); },1000);} return ()=>window.clearInterval(id);},[isSessionActive,timeLeft]);
-  const startSession=()=>{ setIsSessionActive(true); setTimeLeft(7200); };
-  const uploadCanvasPNG = useCallback(async ():Promise<{url:string; key?:string}|null>=>{ if(!canvasRef.current) return null; const canvas=canvasRef.current; const blob:Blob = await new Promise(res=>canvas.toBlob(b=>res(b as Blob),'image/png')); if(isEmbedded){ const dataUrl=canvas.toDataURL('image/png'); return { url: dataUrl }; } try{ const resp=await fetch('/api/upload-url',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({contentType:'image/png', ext:'png', prefix:'frames'})}); if(!resp.ok) throw new Error('no signed'); const { signedUrl, publicUrl, key } = await resp.json(); const put=await fetch(signedUrl,{ method:'PUT', headers:{'Content-Type':'image/png'}, body: blob}); if(!put.ok) throw new Error('upload fail'); return { url: publicUrl || signedUrl.split('?')[0], key }; }catch{ const dataUrl=canvas.toDataURL('image/png'); return { url: dataUrl }; } },[isEmbedded]);
-  const saveFrame = useCallback(async ()=>{ const uploaded=await uploadCanvasPNG(); if(!uploaded) return; const newFrame: Frame={ id: Date.now().toString(), imageData: uploaded.url, timestamp: Date.now(), artist: `Artist ${Math.floor(Math.random()*100)}`, paletteWeek: currentWeek }; setFrames(p=>[...p,newFrame]); },[currentWeek,uploadCanvasPNG]);
+  // Fetch current user once
+  useEffect(()=>{ (async ()=>{ try { const r=await fetch('/api/user'); const j=await r.json(); setUsername(j?.username||null);} catch{} })(); },[]);
+
+  // Load existing remote session & progress when entering draw view
+  useEffect(()=>{ if(currentView!=='draw') return; (async ()=>{ try { const s=await fetch('/api/draw-session'); const sj=await s.json(); if(sj?.active){ setSessionOwner(sj.owner||null);} const p=await fetch('/api/draw-session/progress'); const pj=await p.json(); if(pj?.exists && typeof pj.dataUrl==='string'){ setRestoredImage(pj.dataUrl);} } catch{} })(); },[currentView]);
+
+  const claimSession = useCallback(async ()=>{
+    try {
+      const resp = await fetch('/api/draw-session/claim',{ method:'POST' });
+      if(!resp.ok){ return false; }
+      const data = await resp.json();
+      if(data.ok){ setSessionOwner(data.owner); return true; }
+      return false;
+    } catch { return false; }
+  },[]);
+
+  const startSession=()=>{ (async ()=>{ const ok = await claimSession(); if(ok){ setIsSessionActive(true); setTimeLeft(7200);} })(); };
+  const uploadCanvasPNG = useCallback(async ():Promise<{url:string; key?:string}|null>=>{ if(!canvasRef.current) return null; const canvas=canvasRef.current; const dataUrl=canvas.toDataURL('image/png'); try{ // Direct Devvit redis-backed upload
+    const resp=await fetch('/r2/upload-frame',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ dataUrl })});
+    if(resp.ok){ const j=await resp.json(); return { url: j.url, key: j.key}; }
+    // fallback just return dataUrl
+    return { url: dataUrl };
+  } catch { return { url: dataUrl }; } },[]);
+  const saveFrame = useCallback(async ()=>{ const uploaded=await uploadCanvasPNG(); if(!uploaded) return; const newFrame: Frame={ id: Date.now().toString(), imageData: uploaded.url, timestamp: Date.now(), artist: username || 'anon', paletteWeek: currentWeek }; setFrames(p=>[...p,newFrame]); try { await fetch('/api/draw-session/progress',{ method:'DELETE' }); } catch{} },[currentWeek,uploadCanvasPNG,username]);
   const clearCanvas=()=>{ if(!canvasRef.current) return; const ctx=canvasRef.current.getContext('2d'); if(ctx){ ctx.save(); ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,canvasRef.current.width, canvasRef.current.height); ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,canvasRef.current.width, canvasRef.current.height); ctx.restore(); } };
   const snapshotCanvas=()=>{ if(!canvasRef.current) return; const ctx=canvasRef.current.getContext('2d'); if(!ctx) return; const img=ctx.getImageData(0,0,canvasRef.current.width, canvasRef.current.height); setUndoStack(prev=>{ const next=prev.slice(-24); next.push(img); return next; }); };
   const undo=()=>{ if(!canvasRef.current||undoStack.length===0) return; const ctx=canvasRef.current.getContext('2d'); if(!ctx) return; const prev=undoStack[undoStack.length-1]; if(!prev) return; setUndoStack(undoStack.slice(0,-1)); ctx.putImageData(prev,0,0); };
+
+  // Heartbeat while owning session
+  useEffect(()=>{ if(!isSessionActive || !sessionOwned) return; const id=window.setInterval(()=>{ fetch('/api/draw-session/heartbeat',{ method:'POST' }).catch(()=>{}); },15000); return ()=>window.clearInterval(id); },[isSessionActive,sessionOwned]);
+
+  // Autosave progress every 5s if owner
+  useEffect(()=>{ if(!sessionOwned || !isSessionActive) return; const id=window.setInterval(()=>{ if(!canvasRef.current) return; try { const dataUrl=canvasRef.current.toDataURL('image/png'); if(dataUrl && dataUrl!==lastSavedRef.current){ lastSavedRef.current=dataUrl; fetch('/api/draw-session/progress',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ dataUrl }) }).catch(()=>{}); } } catch{} },5000); return ()=>window.clearInterval(id); },[sessionOwned,isSessionActive]);
+
+  // Release session on unmount (best-effort)
+  useEffect(()=>{ return ()=>{ if(sessionOwned){ fetch('/api/draw-session/release',{ method:'POST' }).catch(()=>{}); } }; },[sessionOwned]);
   return (
     <div className={`min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-violet-900 ${isEmbedded?'embedded-mode':''}`}>
       {isEmbedded && <div className="bg-orange-500/90 text-white text-xs px-3 py-1 text-center font-medium">Running inside Reddit WebView</div>}
@@ -72,7 +107,22 @@ const RootApp: React.FC = () => {
                   </div>
                 )}
                 <div className="inline-block rounded-xl border border-white/20 bg-white/10 backdrop-blur-sm" style={{ width: 540, height: 960 }}>
-                  <Canvas ref={canvasRef} activeColor={activeColor} brushSize={brushSize} isDrawing={isDrawing} setIsDrawing={setIsDrawing} disabled={!isSessionActive || timeLeft===0} brushMode={brushMode} brushPreset={currentPreset as any} tool={tool} onBeforeMutate={snapshotCanvas} zoom={zoom} onionImage={frames.length? frames[frames.length-1].imageData : undefined} onionOpacity={onionOpacity} />
+                  <Canvas
+                    ref={canvasRef}
+                    initialImage={restoredImage}
+                    activeColor={activeColor}
+                    brushSize={brushSize}
+                    isDrawing={isDrawing}
+                    setIsDrawing={setIsDrawing}
+                    disabled={!isSessionActive || timeLeft===0}
+                    brushMode={brushMode}
+                    brushPreset={currentPreset as any}
+                    tool={tool}
+                    onBeforeMutate={snapshotCanvas}
+                    zoom={zoom}
+                    onionImage={frames.length > 0 ? frames[frames.length - 1]!.imageData : undefined}
+                    onionOpacity={onionOpacity}
+                  />
                 </div>
                 {paletteSide==='left' && (
                   <div className="flex flex-col gap-2 pt-2">

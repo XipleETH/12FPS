@@ -14,13 +14,14 @@ interface CanvasProps {
 	zoom?: number;
 	onionImage?: string | undefined;
 	onionOpacity?: number; // 0..1
+	initialImage?: string | null; // optional initial restore image
 }
 
 const FIXED_WIDTH = 540; // Logical drawing width
 const FIXED_HEIGHT = 960; // Logical drawing height
 
 export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
-	({ activeColor, brushSize, isDrawing, setIsDrawing, disabled, brushMode = 'solid', brushPreset, tool = 'draw', onBeforeMutate, zoom: controlledZoom, onionImage, onionOpacity = 0.4 }, ref) => {
+	({ activeColor, brushSize, isDrawing, setIsDrawing, disabled, brushMode = 'solid', brushPreset, tool = 'draw', onBeforeMutate, zoom: controlledZoom, onionImage, onionOpacity = 0.4, initialImage }, ref) => {
 		const internalRef = useRef<HTMLCanvasElement>(null);
 		const canvasRef = (ref as React.RefObject<HTMLCanvasElement>) || internalRef;
 		const lastPointRef = useRef<{ x: number; y: number } | null>(null);
@@ -52,6 +53,32 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
 			ctx.lineCap = 'round';
 			ctx.lineJoin = 'round';
 		}, []);
+
+		// Restore initial image once (or when it changes) if provided
+		const restoredRef = useRef<string | null>(null);
+		useEffect(() => {
+			if (!initialImage) return;
+			if (restoredRef.current === initialImage) return; // already restored
+			const canvas = canvasRef.current; if (!canvas) return;
+			const ctx = canvas.getContext('2d'); if (!ctx) return;
+			// Detect if canvas is still blank (all white) by sampling a few pixels
+			try {
+				const sample = ctx.getImageData(0, 0, 10, 10).data;
+				let nonWhite = false;
+				for (let i = 0; i < sample.length; i += 4) {
+					if (!(sample[i] === 255 && sample[i + 1] === 255 && sample[i + 2] === 255)) { nonWhite = true; break; }
+				}
+				if (nonWhite) return; // user already drew
+			} catch {}
+			const img = new Image();
+			img.onload = () => {
+				try {
+					ctx.drawImage(img, 0, 0, FIXED_WIDTH, FIXED_HEIGHT);
+					restoredRef.current = initialImage;
+				} catch {}
+			};
+			img.src = initialImage;
+		}, [initialImage]);
 
 		// Compute auto scale so the full logical canvas fits within viewport (no scroll needed) on mobile.
 		useEffect(() => {

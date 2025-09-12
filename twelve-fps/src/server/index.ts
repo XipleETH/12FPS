@@ -125,6 +125,161 @@ router.post('/internal/menu/post-create', async (_req, res): Promise<void> => {
   }
 });
 
+// --- Drawing session lock + progress persistence ---
+// Keys:
+//   draw:active:<postId> => { username, claimedAt, lastHeartbeat }
+//   draw:progress:<postId> => { username, dataUrl, updatedAt }
+const LOCK_TIMEOUT_MS = 60_000; // 60s without heartbeat => lock is stale
+
+interface ActiveSession {
+  username: string;
+  claimedAt: number;
+  lastHeartbeat: number;
+}
+
+router.get('/api/draw-session', async (_req, res) => {
+  try {
+    const { postId } = context;
+    if (!postId) return res.json({ active: false });
+    const raw = await redis.get(`draw:active:${postId}`);
+    if (!raw) return res.json({ active: false });
+    const session: ActiveSession = JSON.parse(raw);
+    const now = Date.now();
+    const stale = now - session.lastHeartbeat > LOCK_TIMEOUT_MS;
+    if (stale) {
+  await redis.del(`draw:active:${postId}`);
+      return res.json({ active: false });
+    }
+    res.json({ active: true, owner: session.username, claimedAt: session.claimedAt, lastHeartbeat: session.lastHeartbeat, expiresIn: Math.max(0, LOCK_TIMEOUT_MS - (now - session.lastHeartbeat)) });
+  } catch (e: any) {
+    console.error('[devvit api/draw-session] error', e?.message);
+    res.status(500).json({ active: false, error: 'session check failed' });
+  }
+});
+
+router.post('/api/draw-session/claim', async (_req, res) => {
+  try {
+    const { postId } = context;
+    if (!postId) return res.status(400).json({ ok: false, error: 'post not found' });
+    const username = await reddit.getCurrentUsername();
+    if (!username) return res.status(401).json({ ok: false, error: 'auth required' });
+    const raw = await redis.get(`draw:active:${postId}`);
+    const now = Date.now();
+    if (raw) {
+      const session: ActiveSession = JSON.parse(raw);
+      const stale = now - session.lastHeartbeat > LOCK_TIMEOUT_MS;
+      if (!stale && session.username !== username) {
+        return res.status(409).json({ ok: false, error: 'in-use', owner: session.username });
+      }
+    }
+    const newSession: ActiveSession = { username, claimedAt: now, lastHeartbeat: now };
+    await redis.set(`draw:active:${postId}`, JSON.stringify(newSession));
+    res.json({ ok: true, owner: username });
+  } catch (e: any) {
+    console.error('[devvit api/draw-session/claim] error', e?.message);
+    res.status(500).json({ ok: false, error: 'claim failed' });
+  }
+});
+
+router.post('/api/draw-session/heartbeat', async (_req, res) => {
+  try {
+    const { postId } = context;
+    if (!postId) return res.status(400).json({ ok: false, error: 'post not found' });
+    const username = await reddit.getCurrentUsername();
+    if (!username) return res.status(401).json({ ok: false, error: 'auth required' });
+    const raw = await redis.get(`draw:active:${postId}`);
+    if (!raw) return res.status(404).json({ ok: false, error: 'no-session' });
+    const session: ActiveSession = JSON.parse(raw);
+    if (session.username !== username) return res.status(403).json({ ok: false, error: 'not-owner', owner: session.username });
+    session.lastHeartbeat = Date.now();
+    await redis.set(`draw:active:${postId}`, JSON.stringify(session));
+    res.json({ ok: true });
+  } catch (e: any) {
+    console.error('[devvit api/draw-session/heartbeat] error', e?.message);
+    res.status(500).json({ ok: false, error: 'heartbeat failed' });
+  }
+});
+
+router.post('/api/draw-session/release', async (_req, res) => {
+  try {
+    const { postId } = context;
+    if (!postId) return res.status(400).json({ ok: false, error: 'post not found' });
+    const username = await reddit.getCurrentUsername();
+    if (!username) return res.status(401).json({ ok: false, error: 'auth required' });
+    const raw = await redis.get(`draw:active:${postId}`);
+    if (raw) {
+      const session: ActiveSession = JSON.parse(raw);
+      if (session.username !== username) return res.status(403).json({ ok: false, error: 'not-owner' });
+  await redis.del(`draw:active:${postId}`);
+    }
+    res.json({ ok: true });
+  } catch (e: any) {
+    console.error('[devvit api/draw-session/release] error', e?.message);
+    res.status(500).json({ ok: false, error: 'release failed' });
+  }
+});
+
+// Progress endpoints
+router.get('/api/draw-session/progress', async (_req, res) => {
+  try {
+    const { postId } = context;
+    if (!postId) return res.json({ exists: false });
+    const raw = await redis.get(`draw:progress:${postId}`);
+    if (!raw) return res.json({ exists: false });
+    const progress = JSON.parse(raw);
+    res.json({ exists: true, ...progress });
+  } catch (e: any) {
+    console.error('[devvit api/draw-session/progress GET] error', e?.message);
+    res.status(500).json({ exists: false, error: 'progress fetch failed' });
+  }
+});
+
+router.post('/api/draw-session/progress', async (req, res) => {
+  try {
+    const { postId } = context;
+    const { dataUrl } = req.body || {};
+    if (!postId) return res.status(400).json({ ok: false, error: 'post not found' });
+    const username = await reddit.getCurrentUsername();
+    if (!username) return res.status(401).json({ ok: false, error: 'auth required' });
+    const raw = await redis.get(`draw:active:${postId}`);
+    if (!raw) return res.status(409).json({ ok: false, error: 'no-active-session' });
+    const session: ActiveSession = JSON.parse(raw);
+    const now = Date.now();
+    const stale = now - session.lastHeartbeat > LOCK_TIMEOUT_MS;
+    if (stale) {
+  await redis.del(`draw:active:${postId}`);
+      return res.status(409).json({ ok: false, error: 'session-stale' });
+    }
+    if (session.username !== username) return res.status(403).json({ ok: false, error: 'not-owner' });
+    if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/png;base64,')) {
+      return res.status(400).json({ ok: false, error: 'invalid dataUrl' });
+    }
+    // basic size check (512kb)
+    const base64 = dataUrl.split(',')[1] || '';
+    if (Buffer.from(base64, 'base64').length > 512 * 1024) {
+      return res.status(413).json({ ok: false, error: 'too-large' });
+    }
+    const progress = { username, dataUrl, updatedAt: now };
+    await redis.set(`draw:progress:${postId}`, JSON.stringify(progress));
+    res.json({ ok: true, updatedAt: now });
+  } catch (e: any) {
+    console.error('[devvit api/draw-session/progress POST] error', e?.message);
+    res.status(500).json({ ok: false, error: 'progress save failed' });
+  }
+});
+
+router.delete('/api/draw-session/progress', async (_req, res) => {
+  try {
+    const { postId } = context;
+    if (!postId) return res.status(400).json({ ok: false, error: 'post not found' });
+  await redis.del(`draw:progress:${postId}`);
+    res.json({ ok: true });
+  } catch (e: any) {
+    console.error('[devvit api/draw-session/progress DELETE] error', e?.message);
+    res.status(500).json({ ok: false, error: 'progress delete failed' });
+  }
+});
+
 // --- Redis-based persistent storage for frames (shared across all users) ---
 interface StoredFrame {
   key: string;
