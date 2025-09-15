@@ -18,6 +18,10 @@ interface CanvasProps {
   // Onion skin (previous frame) overlay
   onionImage?: string;
   onionOpacity?: number; // 0..1
+  // Called after a drawing mutation (end of stroke segment / fill) to allow external persistence
+  onDirty?: () => void;
+  // Optional image (dataURL) to restore onto a freshly mounted/cleared canvas
+  restoreImage?: string | null;
 }
 
 // Default fallback size (desktop)
@@ -25,7 +29,7 @@ const DEFAULT_WIDTH = 540;
 const DEFAULT_HEIGHT = 740;
 
 export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
-  ({ activeColor, brushSize, isDrawing, setIsDrawing, disabled, brushMode = 'solid', brushPreset, tool = 'draw', onBeforeMutate, zoom: controlledZoom, onionImage, onionOpacity = 0.4 }, ref) => {
+  ({ activeColor, brushSize, isDrawing, setIsDrawing, disabled, brushMode = 'solid', brushPreset, tool = 'draw', onBeforeMutate, zoom: controlledZoom, onionImage, onionOpacity = 0.4, onDirty, restoreImage }, ref) => {
   const internalRef = useRef<HTMLCanvasElement>(null);
     const canvasRef = (ref as React.RefObject<HTMLCanvasElement>) || internalRef;
     const lastPointRef = useRef<{ x: number; y: number } | null>(null);
@@ -114,7 +118,7 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
       return [r, g, b, 255];
     };
 
-    const drawLine = (from: { x: number; y: number }, to: { x: number; y: number }) => {
+  const drawLine = (from: { x: number; y: number }, to: { x: number; y: number }) => {
       const canvas = canvasRef.current;
       if (!canvas || disabled) return;
 
@@ -184,7 +188,8 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
             }
         }
         ctx.globalAlpha = 1;
-        return;
+  onDirty?.();
+  return;
       }
       if (brushMode === 'solid') {
         // Apply taper, jitter and opacity
@@ -200,7 +205,8 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
         ctx.lineTo(p1.x, p1.y);
         ctx.stroke();
         ctx.globalAlpha = 1;
-        return;
+  onDirty?.();
+  return;
       }
       if (brushMode === 'fade') {
         const progress = strokeProgressRef.current;
@@ -217,7 +223,8 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
         ctx.stroke();
         strokeProgressRef.current += Math.hypot(to.x - from.x, to.y - from.y);
         ctx.globalAlpha = 1;
-        return;
+  onDirty?.();
+  return;
       }
   // soft brush: círculos con degradado radial entre puntos
       const dx = to.x - from.x;
@@ -244,7 +251,8 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
         ctx.arc(x, y, radius, 0, Math.PI * 2);
         ctx.fill();
       }
-      ctx.globalAlpha = 1;
+  ctx.globalAlpha = 1;
+  onDirty?.();
     };
 
   // Old mouse handlers removed; pointer events unify behavior
@@ -373,7 +381,8 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
           ctx.fill();
         }
         ctx.restore();
-        return;
+  onDirty?.();
+  return;
       }
 
       // Solid / Soft / Fade computed by blending into imageData
@@ -407,7 +416,8 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
           }
         }
         ctx.putImageData(imageData, 0, 0);
-        return;
+  onDirty?.();
+  return;
       }
 
   if (brushMode === 'fade') {
@@ -460,7 +470,8 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
       blendPixel(di, Math.max(0, Math.min(1, a)));
         }
       }
-      ctx.putImageData(imageData, 0, 0);
+  ctx.putImageData(imageData, 0, 0);
+  onDirty?.();
     };
 
     const beginStroke = (pos: {x:number;y:number}, erase: boolean) => {
@@ -476,6 +487,8 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
       setIsDrawing(false);
       lastPointRef.current = null;
       eraseRef.current = false;
+  // Mark dirty at end of stroke to ensure persistence captures final state
+  onDirty?.();
     };
 
     const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -549,6 +562,31 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
         panState.current = { x: e.clientX, y: e.clientY, scrollLeft: container.scrollLeft, scrollTop: container.scrollTop };
       }
     };
+
+    // Restore external provided image after canvas backing store (which is sized in another effect) is ready.
+    useEffect(() => {
+      if (!restoreImage) return;
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      const img = new Image();
+      img.onload = () => {
+        // Draw scaled to logical size (canvas width/height already scaled by DPR in CSS; we draw in logical units)
+        const dpr = Math.min(3, window.devicePixelRatio || 1);
+        const logicalW = canvas.width / dpr;
+        const logicalH = canvas.height / dpr;
+        ctx.save();
+        ctx.setTransform(1,0,0,1,0,0);
+        ctx.scale(dpr, dpr);
+        ctx.clearRect(0,0,logicalW,logicalH);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0,0,logicalW,logicalH);
+        ctx.drawImage(img, 0, 0, logicalW, logicalH);
+        ctx.restore();
+      };
+      img.src = restoreImage;
+    }, [restoreImage]);
 
     const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
       if (disabled) return;

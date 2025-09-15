@@ -89,6 +89,26 @@ function App() {
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [undoStack, setUndoStack] = useState<ImageData[]>([]);
+  const [draftImage, setDraftImage] = useState<string | null>(null);
+
+  // Draft persistence (localStorage + future server/Redis hook)
+  const DRAFT_KEY = '12fps:current-draft';
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(DRAFT_KEY);
+      if (stored) setDraftImage(stored);
+    } catch {}
+  }, []);
+
+  const persistDraft = useCallback(() => {
+    if (!canvasRef.current) return;
+    try {
+      const dataUrl = canvasRef.current.toDataURL('image/png');
+      localStorage.setItem(DRAFT_KEY, dataUrl);
+      setDraftImage(dataUrl);
+      // TODO: Optional: throttle + POST to a Devvit server endpoint to store in Redis for cross-device continuity.
+    } catch {}
+  }, []);
 
   // Timer logic
   useEffect(() => {
@@ -179,6 +199,8 @@ function App() {
     if (!canvasRef.current || !isSessionActive) return;
     const dataUrl = canvasRef.current.toDataURL('image/png');
     setPendingFrameDataUrl(dataUrl);
+  // Clearing draft after an intentional save (we treat this as commit-in-progress but keep local draft in case finalize fails)
+  persistDraft();
   }, [isSessionActive]);
 
   // Al finalizar la sesión se sube la última imagen cacheada
@@ -400,6 +422,8 @@ function App() {
                     zoom={zoom}
                     onionImage={frames.length ? frames[frames.length-1].imageData : undefined}
                     onionOpacity={onionOpacity}
+                    onDirty={persistDraft}
+                    restoreImage={draftImage}
                   />
                 </div>
                 {paletteSide === 'left' && (
