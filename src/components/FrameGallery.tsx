@@ -45,11 +45,12 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
           <div
             className="relative bg-white/10 backdrop-blur-sm rounded-2xl overflow-hidden border border-yellow-400/40 hover:bg-white/20 transition-all duration-300"
           >
-            <div className="aspect-square relative">
+            <div className="relative aspect-[540/740] bg-black/40 flex items-center justify-center">
               <img
                 src={pendingFrame.imageData}
                 alt="Pending frame"
-                className="w-full h-full object-cover opacity-90"
+                className="w-full h-full object-contain opacity-90"
+                loading="lazy"
               />
               <div className="absolute top-2 left-2 bg-yellow-500/80 text-black text-xs font-bold px-2 py-1 rounded">
                 En progreso
@@ -70,13 +71,14 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
         {frames.map((frame, index) => (
           <div
             key={frame.id}
-            className="bg-white/10 backdrop-blur-sm rounded-2xl overflow-hidden border border-white/20 hover:bg-white/20 transition-all duration-300 transform hover:scale-105"
+            className="bg-white/10 backdrop-blur-sm rounded-2xl overflow-hidden border border-white/20 hover:bg-white/20 transition-all duration-300 transform hover:scale-[1.02]"
           >
-            <div className="aspect-square">
+            <div className="relative aspect-[540/740] bg-black/40 flex items-center justify-center">
               <img
                 src={frame.imageData}
                 alt={`Frame ${index + 1}`}
-                className="w-full h-full object-cover"
+                className="w-full h-full object-contain"
+                loading="lazy"
               />
             </div>
             

@@ -13,3 +13,9 @@ html, body {
 #root {
 	min-height: 100%;
 }
+
+/* Frame media containers (consistent aspect 540x740) */
+.frame-aspect {
+	aspect-ratio: 540 / 740;
+	position: relative;
+}

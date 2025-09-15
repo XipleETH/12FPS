@@ -73,12 +73,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ frames }) => {
       <div className="max-w-4xl mx-auto">
         <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-6 border border-white/20">
           {/* Video Display */}
-          <div className="aspect-square max-w-lg mx-auto mb-6">
-            <img
-              src={currentFrame.imageData}
-              alt={`Frame ${currentFrameIndex + 1}`}
-              className="w-full h-full object-cover rounded-xl border-2 border-white/20"
-            />
+          <div className="max-w-lg mx-auto mb-6">
+            <div className="relative aspect-[540/740] bg-black/40 rounded-xl border-2 border-white/20 flex items-center justify-center overflow-hidden">
+              <img
+                src={currentFrame.imageData}
+                alt={`Frame ${currentFrameIndex + 1}`}
+                className="max-w-full max-h-full object-contain rounded-md"
+              />
+            </div>
           </div>
 
           {/* Frame Info */}
