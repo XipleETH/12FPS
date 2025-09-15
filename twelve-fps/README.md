@@ -1,71 +1,158 @@
-## Devvit React Starter
+## 12FPS (Devvit App)
 
-A starter to build web applications on Reddit's developer platform
+Collaborative frame-by-frame animation inside Reddit. Users contribute frames in timed drawing turns, and every week the community votes on the color palette, theme, and special brushes for the next cycle. The result is a community video whose aesthetic is steered by collective decisions.
 
-- [Devvit](https://developers.reddit.com/): A way to build and deploy immersive games on Reddit
-- [Vite](https://vite.dev/): For compiling the webView
-- [React](https://react.dev/): For UI
-- [Express](https://expressjs.com/): For backend logic
-- [Tailwind](https://tailwindcss.com/): For styles
-- [Typescript](https://www.typescriptlang.org/): For type safety
+---
+### Goals
+- Encourage coordinated yet asynchronous artistic creation.
+- Enforce constrained resources (palette, brushes) to keep a cohesive weekly style.
+- Integrate native voting + fast in-app state via Redis to close a weekly creative loop.
 
-## Getting Started
+---
+### High-Level Flow
+1. Weekly cycle starts (Week N):
+	- Voting phase opens (palette, theme, optional special brushes).
+	- When voting closes we snapshot the config (cached in Redis).
+2. Drawing Sessions (continuous / daily):
+	- Each turn grants an exclusive 2h session (soft lock per user).
+	- The author draws with only the enabled palette + brush modes.
+	- On finish (or early force-end) a PNG/Base64 frame is produced and persisted.
+3. Playback / Gallery:
+	- Frames are listed + played at 6/12/24 FPS.
+	- Each frame shows author, timestamp, week.
+4. New Week:
+	- Config cache is cleared and a new voting round begins.
 
-> Make sure you have Node 22 downloaded on your machine before running!
+---
+### Technical Components
+| Layer | Tech | Role |
+|-------|------|------|
+| WebView (post) | React + Vite | Interactive UI (canvas, gallery, video, voting) |
+| Devvit Server | Node (Vite SSR build) | Internal endpoints: session lock, save frame, collect votes, weekly rollover task |
+| Fast Store | Redis (Devvit integration) | Cache palette/theme, session locks (TTL), vote counters |
+| Frame Storage | R2 / S3 / Base64 object | Persist final frame image |
+| Weekly Config | Redis + JSON fallback | Snapshot of palette + theme + brushes |
 
-1. Run `npm create devvit@latest --template=react`
-2. Go through the installation wizard. You will need to create a Reddit account and connect it to Reddit developers
-3. Copy the command on the success page into your terminal
+---
+### Redis / Key Model
+Example keys:
+- `week:current` → active week number.
+- `week:<n>:config` → JSON (palette[], theme, enabled brushes).
+- `session:lock` → userId + start + expiry (2h). TTL=7200s.
+- `votes:palette:<n>` → hash { paletteId: count }.
+- `votes:theme:<n>` → hash { themeId: count }.
+- `votes:brush:<n>` → hash { brushId: count }.
+- `frames:week:<n>` → list of frame IDs.
+Locks use SET NX EX for atomicity; optional renewal guarded by ownership.
 
-## Commands
+---
+### Weekly Voting
+1. Open: server seeds candidate palettes/themes (curated or pseudo-random).
+2. User votes (rate-limited per user via Redis INCR + TTL bucket).
+3. Close: cron (or manual endpoint) tallies results → writes `week:<n+1>:config` and updates `week:current`.
+4. UI hydrates from cached new config.
 
-- `npm run dev`: Starts a development server where you can develop your application live on Reddit.
-- `npm run build`: Builds your client and server projects
-- `npm run deploy`: Uploads a new version of your app
-- `npm run launch`: Publishes your app for review
-- `npm run login`: Logs your CLI into Reddit
-- `npm run check`: Type checks, lints, and prettifies your app
+Tie-breaking: earliest threshold (first to reach max) or optional second round.
 
-### Extended (Monorepo Wrapper)
+---
+### 2-Hour Turns (Session Lock)
+On “Start Session”:
+1. Server attempts `SET session:lock {userId,t0} NX EX 7200`.
+2. On success returns remaining time for client countdown.
+3. User may end early; server clears lock and records timestamp.
+4. Natural expiry (no heartbeats) auto-frees slot.
 
-From root (outside `twelve-fps/`):
-- `npm run deploy:devvit`: Build root, sync assets into Devvit app, build server, upload new version.
+No overlap: new user waits until expiry; UI shows “Busy”.
 
-## Troubleshooting: WebView shows old version in Reddit
+---
+### Frame Save Pipeline
+1. Client captures canvas → dataURL PNG (optionally compresses before upload).
+2. POST to `/internal/frame/save` with metadata (week, palette hash, author).
+3. Server validates lock + active week.
+4. Upload to storage (R2, etc.) and push reference + metadata to weekly list.
+5. Invalidate/update cache for listings.
 
-If Reddit displays an outdated UI while localhost/Vercel is newer:
-1. Ensure you ran root build: `npm run build` (hashes change in `/dist/assets`).
-2. Run sync script: `npm run sync:devvit` (this rewrites `twelve-fps/dist/client/index.html` with a fresh timestamp banner `<!-- Synced for Devvit at ... -->`).
-3. Rebuild server bundle: `cd twelve-fps && npm run build:server`.
-4. Upload again: `cd twelve-fps && npx devvit upload` (CLI should auto-bump version). Verify new version number increments.
-5. Hard refresh inside Reddit frame (open dev tools > Network > Disable cache; reload) or open frame in a private window.
-6. Confirm the served HTML inside WebView matches the banner timestamp. If not, likely Reddit cached your previous WebView asset set; wait ~1–2 minutes and retry.
-7. If still stale, bump a no-op change in `dist/client/index.html` (e.g., add a comment) and upload again—forces a distinct hash.
+---
+### Video Playback
+- Client fetches chronological frame list.
+- Optional prefetch / lazy loading.
+- Interval playback (6/12/24 FPS) + progress bar.
+- Future export: server composition (ffmpeg WASM or backend job).
 
-Common pitfalls:
-- Forgetting `sync-devvit` results in server upload referencing old client bundle.
-- Manual edits in `twelve-fps/dist/client/` get overwritten next sync (treat as build artifacts).
-- Absolute `/assets/...` paths not rewritten: script rewrites them to `./assets/` for WebView isolation.
+---
+### Brushes & Constraints
+Modes: Solid, Soft, Fade, Spray (experimental others). 
+We apply weekly caps (max size, opacity, jitter, density) from config→Redis to enforce cohesion.
 
-## Release Pipeline (Recommended)
+---
+### Commands (Inside `twelve-fps/`)
+- `npm run dev` → watch mode (client + server + playtest).
+- `npm run build` → build client and server.
+- `npm run build:client` / `build:server` → individual.
+- `npm run deploy` → build + upload (`devvit upload`).
+- `npm run launch` → publish version.
+- `npm run login` → CLI auth.
 
-```
-npm run build
-npm run sync:devvit
+Root monorepo:
+- `npm run deploy:devvit` → root build + sync + server build + upload.
+- `npm run deploy:reddit` → orchestrated pipeline (short alias).
+
+---
+### WebView Sync Pipeline
+Root app builds with hashed assets. Script `tools/sync-devvit.mjs` copies `dist/index.html` + `dist/assets/` to `twelve-fps/dist/client/`, rewrites `/assets/` → `./assets/`, adds timestamp banner, verifies largest JS tail.
+
+---
+### Performance Notes
+- Canvas caps DPR (<=3) to balance sharpness/memory.
+- Spray / Soft brushes use heuristics to limit steps.
+- Large frame images lazy load; images use `object-contain` preserving 540×740 aspect.
+
+---
+### Security / Anti-Abuse (Planned)
+- Rate limit votes & frame saves (Redis INCR + TTL).
+- Enforce max image size.
+- Basic content filtering placeholder (future moderation layer).
+- Audit metadata (userId, timestamps) per frame.
+
+---
+### Short-Term Roadmap
+- GIF / MP4 export.
+- Local Undo/Redo before submission.
+- Configurable onion-skin overlay.
+- Dynamic palettes with weighting (usage-based curation).
+- Dedicated voting modal UI.
+
+---
+### Fast Local Dev
+```bash
+# root
+npm install
+npm run build        # optional for sync
+npm run sync:devvit  # copy assets into WebView
 cd twelve-fps
 npm run build:server
 npx devvit upload
 ```
 
-Or single command from root:
-
+Live/test mode:
+```bash
+cd twelve-fps
+npm run dev
 ```
-npm run deploy:devvit
-```
 
-Verify at https://developers.reddit.com/apps/<your-app-slug>
+---
+### Common Issues
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| WebView not updating | Forgot sync after root build | `npm run build && npm run sync:devvit` |
+| Old palette showing | Redis cache not invalidated | Run weekly rollover job / delete week keys |
+| Turn not releasing | Client abandoned session | Wait TTL or force-release endpoint |
 
+---
+### License
+BSD-3-Clause (subject to change if needed).
 
-## Cursor Integration
+---
+### Credits
+Built on Devvit + Reddit community. Inspired by pixel-art collabs and jam sessions.
 
-This template comes with a pre-configured cursor environment. To get started, [download cursor](https://www.cursor.com/downloads) and enable the `devvit-mcp` when prompted.
