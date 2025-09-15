@@ -41,7 +41,7 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-        {pendingFrame && (
+  {pendingFrame && (
           <div
             className="relative bg-white/10 backdrop-blur-sm rounded-2xl overflow-hidden border border-yellow-400/40 hover:bg-white/20 transition-all duration-300"
           >
@@ -53,7 +53,7 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
                 loading="lazy"
               />
               <div className="absolute top-2 left-2 bg-yellow-500/80 text-black text-xs font-bold px-2 py-1 rounded">
-                En progreso
+    En progreso
               </div>
             </div>
             <div className="p-4">

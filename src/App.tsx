@@ -61,6 +61,8 @@ function App() {
   const [frames, setFrames] = useState<Frame[]>([]);
   // Frame temporal (solo cache local durante la sesión)
   const [pendingFrameDataUrl, setPendingFrameDataUrl] = useState<string | null>(null);
+  // Shared pending frame (from server)
+  const [sharedPending, setSharedPending] = useState<{ imageData: string; timestamp: number; etag?: string } | null>(null);
   // Estado para último error de subida
   const [lastUploadError, setLastUploadError] = useState<string | null>(null);
   const [uploadDebug, setUploadDebug] = useState<{ key?: string; signedUrl?: string; putStatus?: number } | null>(null);
@@ -76,6 +78,20 @@ function App() {
   const [zoom, setZoom] = useState(1);
   const [onionOpacity, setOnionOpacity] = useState(0.35);
   const canvasCardRef = useRef<HTMLDivElement | null>(null);
+  // Turn-based state
+  const [currentUser, setCurrentUser] = useState<string>('anonymous');
+  const [turnInfo, setTurnInfo] = useState<any>(null);
+  const [lobbyActionLoading, setLobbyActionLoading] = useState(false);
+  const debugMode = (() => {
+    if (typeof window === 'undefined') return false;
+    const qs = window.location.search;
+    const hash = window.location.hash;
+    if (qs.includes('debug=1') || hash.includes('debug=1')) return true;
+    try { if (localStorage.getItem('12fps:debug') === '1') return true; } catch {}
+    // Auto-enable in reddit embed for convenience
+    try { if (window.self !== window.top && document.referrer.includes('reddit.com')) return true; } catch {}
+    return false;
+  })();
   
   // Weekly palette - changes every week
   const weeklyPalettes = [
@@ -99,6 +115,49 @@ function App() {
       if (stored) setDraftImage(stored);
     } catch {}
   }, []);
+
+  // User identity derive from ?user= or localStorage
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const qUser = params.get('user');
+      const stored = localStorage.getItem('12fps:user');
+      const finalUser = qUser || stored || ('user'+Math.random().toString(36).slice(2,8));
+      setCurrentUser(finalUser);
+      localStorage.setItem('12fps:user', finalUser);
+    } catch {}
+  }, []);
+
+  // Poll turn info every 15s
+  useEffect(() => {
+    let id: number | null = null;
+    const fetchTurn = async () => {
+      try {
+        const r = await fetch('/api/turn');
+        if(!r.ok) return;
+        const j = await r.json();
+        setTurnInfo(j);
+      } catch {}
+    };
+    fetchTurn();
+    id = window.setInterval(fetchTurn, 15000);
+    return () => { if(id) window.clearInterval(id); };
+  }, []);
+
+  // Auto start/stop session based on selection
+  useEffect(() => {
+    if(!turnInfo) return;
+    // If no artist selected yet, allow user to start/keep session (open practice before selection)
+    if(!turnInfo.currentArtist) return; // don't auto-stop or start until selection exists
+    const isArtist = turnInfo.currentArtist === currentUser;
+    if(isArtist && !isSessionActive){
+      startSession();
+    }
+    if(!isArtist && isSessionActive){
+      // Only stop if selection exists and user isn't artist
+      setIsSessionActive(false);
+    }
+  }, [turnInfo, currentUser, isSessionActive]);
 
   const persistDraft = useCallback(() => {
     if (!canvasRef.current) return;
@@ -201,6 +260,12 @@ function App() {
     setPendingFrameDataUrl(dataUrl);
   // Clearing draft after an intentional save (we treat this as commit-in-progress but keep local draft in case finalize fails)
   persistDraft();
+    // Fire-and-forget upload to shared pending endpoint
+    (async () => {
+      try {
+        await fetch('/api/pending-frame', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dataUrl }) });
+      } catch {}
+    })();
   }, [isSessionActive]);
 
   // Al finalizar la sesión se sube la última imagen cacheada
@@ -253,6 +318,8 @@ function App() {
       setPendingFrameDataUrl(null);
       setLastUploadError(null);
       console.log('[finalize] subida exitosa');
+  // Clear shared pending on success
+  try { fetch('/api/pending-frame', { method: 'DELETE' }); } catch {}
     } finally {
       finalizingRef.current = false;
     }
@@ -267,6 +334,34 @@ function App() {
       finalizeSessionUpload();
     }, 0);
   }, [isSessionActive, finalizeSessionUpload]);
+
+  // Poll shared pending frame every 10s when drawing or viewing gallery
+  useEffect(() => {
+    let interval: number | null = null;
+    const active = currentView === 'draw' || currentView === 'gallery';
+    if (active) {
+      const fetchPending = async () => {
+        try {
+          const r = await fetch('/api/pending-frame');
+          if (!r.ok) return;
+          const j = await r.json();
+          if (j && j.pending && j.pending.url) {
+            const cacheBuster = j.pending.etag || j.pending.lastModified || Date.now();
+            const bustedUrl = j.pending.url + (j.pending.url.includes('?') ? '&' : '?') + 'v=' + cacheBuster;
+            setSharedPending(prev => {
+              if (prev && prev.etag === j.pending.etag) return prev; // unchanged
+              return { imageData: bustedUrl, timestamp: j.pending.lastModified || Date.now(), etag: j.pending.etag };
+            });
+          } else {
+            setSharedPending(null);
+          }
+        } catch {}
+      };
+      fetchPending();
+      interval = window.setInterval(fetchPending, 10000);
+    }
+    return () => { if (interval) window.clearInterval(interval); };
+  }, [currentView]);
 
   // Detectar fin de sesión (timer llega a 0)
   const prevIsActiveRef = useRef(isSessionActive);
@@ -348,6 +443,32 @@ function App() {
       
   <Header currentView={currentView} setCurrentView={setCurrentView} />
   <div className="max-w-6xl mx-auto px-3 pb-4">
+        {/* Turn / Lobby banner */}
+        {turnInfo && (
+          <div className="mb-4 text-xs text-white/80 bg-white/10 border border-white/20 rounded-lg p-3 flex flex-wrap gap-3 items-center">
+            <div><span className="font-semibold">User:</span> {currentUser}</div>
+            <div><span className="font-semibold">Artist:</span> {turnInfo.currentArtist || '—'}</div>
+            <div><span className="font-semibold">Lobby:</span> {turnInfo.lobby?.length || 0}</div>
+            <div><span className="font-semibold">Lobby Open:</span> {turnInfo.lobbyOpen ? 'yes' : `in ${Math.max(0, Math.floor((turnInfo.lobbyOpensIn||0)/60000))}m`}</div>
+            <div><span className="font-semibold">Pick:</span> {turnInfo.pickingPhase ? 'choosing' : `in ${Math.max(0, Math.floor((turnInfo.pickIn||0)/60000))}m`}</div>
+            {debugMode && (
+              <button disabled={lobbyActionLoading} onClick={async ()=>{ setLobbyActionLoading(true); try{ await fetch('/api/turn',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'fastForwardLobby', user: currentUser })}); const r= await fetch('/api/turn'); if(r.ok){ setTurnInfo(await r.json()); } } finally { setLobbyActionLoading(false); } }} className="px-2 py-1 bg-blue-600/70 hover:bg-blue-600 text-white rounded text-xs">FF Lobby</button>
+            )}
+            {turnInfo.lobbyOpen && !turnInfo.selectionFinal && (
+              <div className="flex gap-2">
+                {!turnInfo.lobby.includes(currentUser) && (
+                  <button disabled={lobbyActionLoading} onClick={async ()=>{ setLobbyActionLoading(true); try{ await fetch('/api/turn',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'join', user: currentUser })}); } finally { setLobbyActionLoading(false);} }} className="px-2 py-1 bg-green-600/70 hover:bg-green-600 text-white rounded text-xs">Join lobby</button>
+                )}
+                {turnInfo.lobby.includes(currentUser) && (
+                  <button disabled={lobbyActionLoading} onClick={async ()=>{ setLobbyActionLoading(true); try{ await fetch('/api/turn',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'leave', user: currentUser })}); } finally { setLobbyActionLoading(false);} }} className="px-2 py-1 bg-yellow-600/70 hover:bg-yellow-600 text-white rounded text-xs">Leave</button>
+                )}
+              </div>
+            )}
+            {turnInfo.selectionFinal && turnInfo.currentArtist === currentUser && (
+              <button onClick={forceEndSession} className="ml-auto px-2 py-1 bg-red-600/70 hover:bg-red-600 text-white rounded text-xs">Finalize (test)</button>
+            )}
+          </div>
+        )}
         {currentView === 'draw' && (
           <div className={`w-full flex justify-center gap-6 ${paletteSide === 'left' ? 'flex-row' : 'flex-row-reverse'}`}>
             <SidePanels
@@ -366,7 +487,7 @@ function App() {
               onSave={saveFrame}
               onClear={clearCanvas}
               onUndo={undo}
-              disabled={!isSessionActive || timeLeft === 0}
+              disabled={!isSessionActive || timeLeft === 0 || (turnInfo && turnInfo.currentArtist && turnInfo.currentArtist !== currentUser)}
               timeLeft={timeLeft}
               isSessionActive={isSessionActive}
               onStartSession={startSession}
@@ -414,7 +535,7 @@ function App() {
                     brushSize={brushSize}
                     isDrawing={isDrawing}
                     setIsDrawing={setIsDrawing}
-                    disabled={!isSessionActive || timeLeft === 0}
+                    disabled={!isSessionActive || timeLeft === 0 || (turnInfo && turnInfo.currentArtist && turnInfo.currentArtist !== currentUser)}
                     brushMode={'solid'}
                     brushPreset={undefined}
                     tool={tool}
@@ -467,7 +588,7 @@ function App() {
         {currentView === 'gallery' && (
           <FrameGallery
             frames={frames}
-            pendingFrame={pendingFrameDataUrl ? { imageData: pendingFrameDataUrl, startedAt: sessionStartTs || Date.now() } : null}
+            pendingFrame={(pendingFrameDataUrl || sharedPending) ? { imageData: pendingFrameDataUrl || sharedPending!.imageData, startedAt: sessionStartTs || sharedPending?.timestamp || Date.now() } : null}
           />
         )}
         {lastUploadError && (

@@ -4,7 +4,6 @@ import react from '@vitejs/plugin-react';
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  base: './', // ensure relative asset paths inside Reddit webview
   plugins: [react(), tailwind()],
   build: {
     outDir: '../../dist/client',
