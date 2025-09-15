@@ -187,8 +187,7 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
               }
             }
         }
-        ctx.globalAlpha = 1;
-  onDirty?.();
+  ctx.globalAlpha = 1;
   return;
       }
       if (brushMode === 'solid') {
@@ -204,8 +203,7 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
         ctx.moveTo(p0.x, p0.y);
         ctx.lineTo(p1.x, p1.y);
         ctx.stroke();
-        ctx.globalAlpha = 1;
-  onDirty?.();
+  ctx.globalAlpha = 1;
   return;
       }
       if (brushMode === 'fade') {
@@ -222,8 +220,7 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
         ctx.lineTo(p1.x, p1.y);
         ctx.stroke();
         strokeProgressRef.current += Math.hypot(to.x - from.x, to.y - from.y);
-        ctx.globalAlpha = 1;
-  onDirty?.();
+  ctx.globalAlpha = 1;
   return;
       }
   // soft brush: círculos con degradado radial entre puntos
@@ -252,7 +249,6 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
         ctx.fill();
       }
   ctx.globalAlpha = 1;
-  onDirty?.();
     };
 
   // Old mouse handlers removed; pointer events unify behavior
@@ -415,8 +411,7 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
             }
           }
         }
-        ctx.putImageData(imageData, 0, 0);
-  onDirty?.();
+    ctx.putImageData(imageData, 0, 0);
   return;
       }
 
@@ -471,7 +466,6 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
         }
       }
   ctx.putImageData(imageData, 0, 0);
-  onDirty?.();
     };
 
     const beginStroke = (pos: {x:number;y:number}, erase: boolean) => {
@@ -563,16 +557,15 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
       }
     };
 
-    // Restore external provided image after canvas backing store (which is sized in another effect) is ready.
+    // One-time restore of provided image
+    const restoredRef = useRef(false);
     useEffect(() => {
+      if (restoredRef.current) return;
       if (!restoreImage) return;
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
+      const canvas = canvasRef.current; if (!canvas) return;
+      const ctx = canvas.getContext('2d'); if (!ctx) return;
       const img = new Image();
       img.onload = () => {
-        // Draw scaled to logical size (canvas width/height already scaled by DPR in CSS; we draw in logical units)
         const dpr = Math.min(3, window.devicePixelRatio || 1);
         const logicalW = canvas.width / dpr;
         const logicalH = canvas.height / dpr;
@@ -584,6 +577,7 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
         ctx.fillRect(0,0,logicalW,logicalH);
         ctx.drawImage(img, 0, 0, logicalW, logicalH);
         ctx.restore();
+        restoredRef.current = true;
       };
       img.src = restoreImage;
     }, [restoreImage]);
