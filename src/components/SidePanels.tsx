@@ -25,11 +25,8 @@ interface SidePanelsProps {
   disabled?: boolean;
   // session controls
   timeLeft?: number; // seconds until window end
-  onFastForwardLobby?: () => void;
-  showFastForward?: boolean;
-  // Turn/lobby new props
-  joinLobbyButton?: React.ReactNode;
-  leaveLobbyButton?: React.ReactNode;
+  // Lobby
+  lobbyToggleButton?: React.ReactNode;
   isArtist?: boolean; // whether local user is current artist
 }
 
@@ -80,10 +77,7 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
   onUndo,
   disabled,
   timeLeft,
-  onFastForwardLobby,
-  showFastForward,
-  joinLobbyButton,
-  leaveLobbyButton,
+  lobbyToggleButton,
 }) => {
   const move = (key: PanelKey, dir: -1 | 1) => {
     const idx = order.indexOf(key);
@@ -125,15 +119,7 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
               <div className="flex items-center justify-center gap-2 text-white/90 text-[11px] font-mono">
                 <Clock className="w-4 h-4 text-white/80" />
                 <span>{new Date(timeLeft * 1000).toISOString().substring(11,19)}</span>
-                <div className="flex items-center gap-2">
-                  {joinLobbyButton}
-                  {leaveLobbyButton}
-                  {showFastForward && (
-                    <button onClick={onFastForwardLobby} className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500/80 hover:bg-blue-500 text-white text-[11px] font-semibold" title="Fast-forward">
-                      FF
-                    </button>
-                  )}
-                </div>
+                <div className="flex items-center gap-2">{lobbyToggleButton}</div>
               </div>
             )}
           </div>

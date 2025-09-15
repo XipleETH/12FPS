@@ -57,14 +57,13 @@ function computeState(){
   const pickingPhase = false;
   // At exact start of new window: clear previous selection
   // At window start selection should already be made from previous window's lobby. We ensure selection for current window by checking lastSelected.windowStart.
+  // Force artist override (development)
+  const FORCED_USER = 'Consistent_Reply_557';
   if (!lastSelected || lastSelected.windowStart !== win.start){
-    if (lobby.size){
-      const arr = Array.from(lobby);
-      const chosen = arr[Math.floor(Math.random()*arr.length)];
-      lastSelected = { user: chosen, windowStart: win.start };
-      // Clear lobby after selecting so new participants can join for next window
-      lobby = new Set();
-    }
+    lastSelected = { user: FORCED_USER, windowStart: win.start };
+  } else if (lastSelected.user !== FORCED_USER) {
+    // Maintain forced user even if prior selection existed
+    lastSelected = { user: FORCED_USER, windowStart: win.start };
   }
   return {
     now,
@@ -72,15 +71,17 @@ function computeState(){
     windowStart: win.start,
     windowEnd: win.end,
     timeToEnd,
+    timeToEndSeconds: Math.max(0, Math.floor(timeToEnd/1000)),
     weekStart: win.weekStart,
     weekWindowIndex: win.windowIndex,
   lobbyOpen,
   pickingPhase, // deprecated (always false)
     lobby: Array.from(lobby),
-    currentArtist: lastSelected ? lastSelected.user : null,
+  currentArtist: lastSelected ? lastSelected.user : null,
+  forcedArtist: true,
     selectionFinal: !!lastSelected,
-    lobbyOpensIn: lobbyOpen ? 0 : (lobbyOpensAt - now),
-    pickIn: pickingPhase ? 0 : (pickAt - now)
+    lobbyOpensIn: 0,
+    pickIn: 0
   };
 }
 

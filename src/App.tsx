@@ -78,25 +78,9 @@ function App() {
   const [currentUser, setCurrentUser] = useState<string>('anonymous');
   const [turnInfo, setTurnInfo] = useState<any>(null);
   const [lobbyActionLoading, setLobbyActionLoading] = useState(false);
-  const debugMode = (() => {
-    if (typeof window === 'undefined') return false;
-    const qs = window.location.search;
-    const hash = window.location.hash;
-    if (qs.includes('debug=1') || hash.includes('debug=1')) return true;
-    try { if (localStorage.getItem('12fps:debug') === '1') return true; } catch {}
-    // Auto-enable in reddit embed for convenience
-    try { if (window.self !== window.top && document.referrer.includes('reddit.com')) return true; } catch {}
-    return false;
-  })();
+  // debugMode removed (fast forward no longer used)
 
-  const fastForwardLobby = useCallback(async () => {
-    try {
-      setLobbyActionLoading(true);
-      await fetch('/api/turn', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'fastForwardLobby', user: currentUser }) });
-      const r = await fetch('/api/turn');
-      if (r.ok) setTurnInfo(await r.json());
-    } catch {} finally { setLobbyActionLoading(false); }
-  }, [currentUser]);
+  // fastForward removed
   
   // Weekly palette - changes every week
   const weeklyPalettes = [
@@ -168,18 +152,41 @@ function App() {
     } catch {}
   }, []);
 
-  // Countdown derived from server windowEnd
+  // Countdown robust: use server windowEnd/timeToEndSeconds; correct drift periodically
+  const countdownRef = useRef<{ targetMs: number; lastServerSync: number; lastDisplayed: number }>({ targetMs: 0, lastServerSync: 0, lastDisplayed: 0 });
   useEffect(() => {
     if (!turnInfo) return;
-    const compute = () => {
+    const now = Date.now();
+    let target = 0;
+    if (typeof turnInfo.windowEnd === 'number') {
+      target = turnInfo.windowEnd;
+    } else if (typeof turnInfo.timeToEndSeconds === 'number') {
+      target = now + turnInfo.timeToEndSeconds * 1000;
+    }
+    if (target > 0) {
+      countdownRef.current.targetMs = target;
+      countdownRef.current.lastServerSync = now;
+    }
+  }, [turnInfo?.windowEnd, turnInfo?.timeToEndSeconds]);
+
+  useEffect(() => {
+    const tick = () => {
+      const { targetMs } = countdownRef.current;
+      if (!targetMs) {
+        setTimeLeft(0);
+        return;
+      }
       const now = Date.now();
-      const ms = (turnInfo.windowEnd || 0) - now;
-      setTimeLeft(ms > 0 ? Math.floor(ms / 1000) : 0);
+      let sec = Math.floor((targetMs - now) / 1000);
+      if (sec < 0) sec = 0;
+      // Drift correction: if local differs from server implied (turnInfo.timeToEndSeconds) by >5s right after sync window, rely on new sync
+      setTimeLeft(sec);
+      countdownRef.current.lastDisplayed = now;
     };
-    compute();
-    const id = window.setInterval(compute, 1000);
+    const id = window.setInterval(tick, 1000);
+    tick();
     return () => window.clearInterval(id);
-  }, [turnInfo?.windowEnd]);
+  }, []);
 
   // Sube un dataURL al backend (con soporte interno Reddit /r2/upload-frame)
   async function uploadDataUrlPNG(dataUrl: string): Promise<{ url: string; key?: string } | null> {
@@ -444,9 +451,6 @@ function App() {
             <div><span className="font-semibold">Lobby:</span> {turnInfo.lobby?.length || 0}</div>
             <div><span className="font-semibold">Lobby Open:</span> {turnInfo.lobbyOpen ? 'yes' : `in ${Math.max(0, Math.floor((turnInfo.lobbyOpensIn||0)/60000))}m`}</div>
             <div><span className="font-semibold">Pick:</span> {turnInfo.pickingPhase ? 'choosing' : `in ${Math.max(0, Math.floor((turnInfo.pickIn||0)/60000))}m`}</div>
-            {debugMode && (
-              <button disabled={lobbyActionLoading} onClick={async ()=>{ setLobbyActionLoading(true); try{ await fetch('/api/turn',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'fastForwardLobby', user: currentUser })}); const r= await fetch('/api/turn'); if(r.ok){ setTurnInfo(await r.json()); } } finally { setLobbyActionLoading(false); } }} className="px-2 py-1 bg-blue-600/70 hover:bg-blue-600 text-white rounded text-xs">FF Lobby</button>
-            )}
             {turnInfo.lobbyOpen && !turnInfo.selectionFinal && (
               <div className="flex gap-2">
                 {!turnInfo.lobby.includes(currentUser) && (
@@ -482,13 +486,10 @@ function App() {
               onUndo={undo}
               disabled={!(turnInfo && turnInfo.currentArtist === currentUser) || timeLeft === 0}
               timeLeft={timeLeft}
-              onFastForwardLobby={fastForwardLobby}
-              showFastForward={true}
-              joinLobbyButton={turnInfo && turnInfo.lobbyOpen && !turnInfo.selectionFinal && !turnInfo.lobby.includes(currentUser) ? (
-                <button disabled={lobbyActionLoading} onClick={async ()=>{ setLobbyActionLoading(true); try{ await fetch('/api/turn',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'join', user: currentUser })}); const r= await fetch('/api/turn'); if(r.ok) setTurnInfo(await r.json()); } finally { setLobbyActionLoading(false);} }} className="px-2 py-0.5 bg-green-600/80 hover:bg-green-600 text-white rounded-full text-[11px]">Join</button>
-              ) : null}
-              leaveLobbyButton={turnInfo && turnInfo.lobby.includes(currentUser) ? (
-                <button disabled={lobbyActionLoading} onClick={async ()=>{ setLobbyActionLoading(true); try{ await fetch('/api/turn',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'leave', user: currentUser })}); const r= await fetch('/api/turn'); if(r.ok) setTurnInfo(await r.json()); } finally { setLobbyActionLoading(false);} }} className="px-2 py-0.5 bg-yellow-500/80 hover:bg-yellow-500 text-white rounded-full text-[11px]">Leave</button>
+              lobbyToggleButton={turnInfo && turnInfo.lobby ? (
+                turnInfo.lobby.includes(currentUser)
+                  ? <button disabled={lobbyActionLoading} onClick={async ()=>{ setLobbyActionLoading(true); try{ await fetch('/api/turn',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'leave', user: currentUser })}); const r= await fetch('/api/turn'); if(r.ok) setTurnInfo(await r.json()); } finally { setLobbyActionLoading(false);} }} className="px-2 py-0.5 bg-yellow-500/80 hover:bg-yellow-500 text-white rounded-full text-[11px]">Salir</button>
+                  : <button disabled={lobbyActionLoading} onClick={async ()=>{ setLobbyActionLoading(true); try{ await fetch('/api/turn',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'join', user: currentUser })}); const r= await fetch('/api/turn'); if(r.ok) setTurnInfo(await r.json()); } finally { setLobbyActionLoading(false);} }} className="px-2 py-0.5 bg-green-600/80 hover:bg-green-600 text-white rounded-full text-[11px]">Unirme</button>
               ) : null}
             />
             <div ref={canvasCardRef}>
