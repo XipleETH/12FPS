@@ -36,7 +36,6 @@ function App() {
     try { return typeof window !== 'undefined' && window.self !== window.top; } catch { return false; }
   });
   const [embedContext, setEmbedContext] = useState<string>('');
-  const [embedReady, setEmbedReady] = useState(false);
 
   useEffect(() => {
     try {
@@ -50,9 +49,7 @@ function App() {
       } else {
         setEmbedContext('');
       }
-    } finally {
-      setEmbedReady(true);
-    }
+    } catch {}
   }, []);
 
   const [activeColor, setActiveColor] = useState('#FF6B6B');
@@ -67,9 +64,8 @@ function App() {
   const [lastUploadError, setLastUploadError] = useState<string | null>(null);
   const [uploadDebug, setUploadDebug] = useState<{ key?: string; signedUrl?: string; putStatus?: number } | null>(null);
   const [currentView, setCurrentView] = useState<'draw' | 'gallery' | 'video' | 'voting' | 'chat'>('draw');
-  const [timeLeft, setTimeLeft] = useState(7200); // 2 hours in seconds
-  const [isSessionActive, setIsSessionActive] = useState(false);
-  const [sessionStartTs, setSessionStartTs] = useState<number | null>(null);
+  const [timeLeft, setTimeLeft] = useState<number>(0); // seconds until current 2h window end
+  const [sessionStartTs, setSessionStartTs] = useState<number | null>(null); // when current artist window started
   const [currentWeek] = useState(1);
   const [paletteSide, setPaletteSide] = useState<'left' | 'right'>('right');
   // Brush system disabled (presets & styles removed)
@@ -92,6 +88,15 @@ function App() {
     try { if (window.self !== window.top && document.referrer.includes('reddit.com')) return true; } catch {}
     return false;
   })();
+
+  const fastForwardLobby = useCallback(async () => {
+    try {
+      setLobbyActionLoading(true);
+      await fetch('/api/turn', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'fastForwardLobby', user: currentUser }) });
+      const r = await fetch('/api/turn');
+      if (r.ok) setTurnInfo(await r.json());
+    } catch {} finally { setLobbyActionLoading(false); }
+  }, [currentUser]);
   
   // Weekly palette - changes every week
   const weeklyPalettes = [
@@ -144,20 +149,14 @@ function App() {
     return () => { if(id) window.clearInterval(id); };
   }, []);
 
-  // Auto start/stop session based on selection
+  // Track artist window start timestamp
   useEffect(() => {
-    if(!turnInfo) return;
-    // If no artist selected yet, allow user to start/keep session (open practice before selection)
-    if(!turnInfo.currentArtist) return; // don't auto-stop or start until selection exists
-    const isArtist = turnInfo.currentArtist === currentUser;
-    if(isArtist && !isSessionActive){
-      startSession();
+    if (!turnInfo) return;
+    if (turnInfo.currentArtist) {
+      // if artist just selected or changed, record start
+      setSessionStartTs(turnInfo.windowStart);
     }
-    if(!isArtist && isSessionActive){
-      // Only stop if selection exists and user isn't artist
-      setIsSessionActive(false);
-    }
-  }, [turnInfo, currentUser, isSessionActive]);
+  }, [turnInfo?.currentArtist, turnInfo?.windowStart]);
 
   const persistDraft = useCallback(() => {
     if (!canvasRef.current) return;
@@ -169,29 +168,18 @@ function App() {
     } catch {}
   }, []);
 
-  // Timer logic
+  // Countdown derived from server windowEnd
   useEffect(() => {
-  let interval: number;
-    if (isSessionActive && timeLeft > 0) {
-  interval = window.setInterval(() => {
-        setTimeLeft(prev => {
-          if (prev <= 1) {
-            setIsSessionActive(false);
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    }
-  return () => window.clearInterval(interval);
-  }, [isSessionActive, timeLeft]);
-
-  const startSession = () => {
-    setIsSessionActive(true);
-    setTimeLeft(7200);
-    setPendingFrameDataUrl(null);
-  setSessionStartTs(Date.now());
-  };
+    if (!turnInfo) return;
+    const compute = () => {
+      const now = Date.now();
+      const ms = (turnInfo.windowEnd || 0) - now;
+      setTimeLeft(ms > 0 ? Math.floor(ms / 1000) : 0);
+    };
+    compute();
+    const id = window.setInterval(compute, 1000);
+    return () => window.clearInterval(id);
+  }, [turnInfo?.windowEnd]);
 
   // Sube un dataURL al backend (con soporte interno Reddit /r2/upload-frame)
   async function uploadDataUrlPNG(dataUrl: string): Promise<{ url: string; key?: string } | null> {
@@ -255,7 +243,8 @@ function App() {
 
   // Guardar dentro de la sesión: solo cache local, no subir
   const saveFrame = useCallback(() => {
-    if (!canvasRef.current || !isSessionActive) return;
+    // Only artist can save
+    if (!canvasRef.current || !(turnInfo && turnInfo.currentArtist === currentUser)) return;
     const dataUrl = canvasRef.current.toDataURL('image/png');
     setPendingFrameDataUrl(dataUrl);
   // Clearing draft after an intentional save (we treat this as commit-in-progress but keep local draft in case finalize fails)
@@ -266,7 +255,7 @@ function App() {
         await fetch('/api/pending-frame', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dataUrl }) });
       } catch {}
     })();
-  }, [isSessionActive]);
+  }, [turnInfo, currentUser, persistDraft]);
 
   // Al finalizar la sesión se sube la última imagen cacheada
   const finalizingRef = useRef(false);
@@ -326,14 +315,10 @@ function App() {
   }, [pendingFrameDataUrl, currentWeek]);
 
   const forceEndSession = useCallback(() => {
-    if (!isSessionActive) return;
-    setIsSessionActive(false);
-    setTimeLeft(0);
-    // Disparar finalize explícitamente además del effect (guard previene duplicado)
-    setTimeout(() => {
-      finalizeSessionUpload();
-    }, 0);
-  }, [isSessionActive, finalizeSessionUpload]);
+    // manual finalize by current artist (debug/testing)
+    if (!(turnInfo && turnInfo.currentArtist === currentUser)) return;
+    finalizeSessionUpload();
+  }, [turnInfo, currentUser, finalizeSessionUpload]);
 
   // Poll shared pending frame every 10s when drawing or viewing gallery
   useEffect(() => {
@@ -363,14 +348,22 @@ function App() {
     return () => { if (interval) window.clearInterval(interval); };
   }, [currentView]);
 
-  // Detectar fin de sesión (timer llega a 0)
-  const prevIsActiveRef = useRef(isSessionActive);
+  // Auto finalize when window ends and we were the artist
+  const prevArtistRef = useRef<string | null>(null);
   useEffect(() => {
-    if (prevIsActiveRef.current && !isSessionActive && timeLeft === 0) {
+    if (!turnInfo) return;
+    if (prevArtistRef.current && prevArtistRef.current === currentUser && prevArtistRef.current !== turnInfo.currentArtist) {
+      // artist changed away from us -> ensure finalize attempted
       finalizeSessionUpload();
     }
-    prevIsActiveRef.current = isSessionActive;
-  }, [isSessionActive, timeLeft, finalizeSessionUpload]);
+    prevArtistRef.current = turnInfo.currentArtist;
+  }, [turnInfo?.currentArtist, finalizeSessionUpload, currentUser]);
+
+  useEffect(() => {
+    if (timeLeft === 0 && turnInfo && turnInfo.currentArtist === currentUser) {
+      finalizeSessionUpload();
+    }
+  }, [timeLeft, turnInfo?.currentArtist, currentUser, finalizeSessionUpload]);
 
   // Cargar frames existentes desde el backend (R2 listing)
   useEffect(() => {
@@ -464,8 +457,8 @@ function App() {
                 )}
               </div>
             )}
-            {turnInfo.selectionFinal && turnInfo.currentArtist === currentUser && (
-              <button onClick={forceEndSession} className="ml-auto px-2 py-1 bg-red-600/70 hover:bg-red-600 text-white rounded text-xs">Finalize (test)</button>
+            {turnInfo.currentArtist === currentUser && (
+              <button onClick={forceEndSession} className="ml-auto px-2 py-1 bg-red-600/70 hover:bg-red-600 text-white rounded text-xs">Finalize (debug)</button>
             )}
           </div>
         )}
@@ -487,11 +480,16 @@ function App() {
               onSave={saveFrame}
               onClear={clearCanvas}
               onUndo={undo}
-              disabled={!isSessionActive || timeLeft === 0 || (turnInfo && turnInfo.currentArtist && turnInfo.currentArtist !== currentUser)}
+              disabled={!(turnInfo && turnInfo.currentArtist === currentUser) || timeLeft === 0}
               timeLeft={timeLeft}
-              isSessionActive={isSessionActive}
-              onStartSession={startSession}
-              onForceEnd={forceEndSession}
+              onFastForwardLobby={fastForwardLobby}
+              showFastForward={true}
+              joinLobbyButton={turnInfo && turnInfo.lobbyOpen && !turnInfo.selectionFinal && !turnInfo.lobby.includes(currentUser) ? (
+                <button disabled={lobbyActionLoading} onClick={async ()=>{ setLobbyActionLoading(true); try{ await fetch('/api/turn',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'join', user: currentUser })}); const r= await fetch('/api/turn'); if(r.ok) setTurnInfo(await r.json()); } finally { setLobbyActionLoading(false);} }} className="px-2 py-0.5 bg-green-600/80 hover:bg-green-600 text-white rounded-full text-[11px]">Join</button>
+              ) : null}
+              leaveLobbyButton={turnInfo && turnInfo.lobby.includes(currentUser) ? (
+                <button disabled={lobbyActionLoading} onClick={async ()=>{ setLobbyActionLoading(true); try{ await fetch('/api/turn',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'leave', user: currentUser })}); const r= await fetch('/api/turn'); if(r.ok) setTurnInfo(await r.json()); } finally { setLobbyActionLoading(false);} }} className="px-2 py-0.5 bg-yellow-500/80 hover:bg-yellow-500 text-white rounded-full text-[11px]">Leave</button>
+              ) : null}
             />
             <div ref={canvasCardRef}>
               <div className="flex items-start gap-4">
@@ -535,7 +533,7 @@ function App() {
                     brushSize={brushSize}
                     isDrawing={isDrawing}
                     setIsDrawing={setIsDrawing}
-                    disabled={!isSessionActive || timeLeft === 0 || (turnInfo && turnInfo.currentArtist && turnInfo.currentArtist !== currentUser)}
+                    disabled={!(turnInfo && turnInfo.currentArtist === currentUser) || timeLeft === 0}
                     brushMode={'solid'}
                     brushPreset={undefined}
                     tool={tool}

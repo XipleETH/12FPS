@@ -16,17 +16,30 @@ function cors(res){
 }
 
 const WINDOW_MS = 2 * 60 * 60 * 1000; // 2h
-const LOBBY_OPEN_BEFORE_MS = 10 * 60 * 1000; // 10 min
-const PICK_BEFORE_MS = 3 * 60 * 1000; // 3 min
+// Semana comienza Domingo 00:00 EST (usamos offset fijo UTC-5, sin DST para simplicidad)
+// EST fija = UTC-5 => offset en ms
+const EST_OFFSET_MS = 5 * 60 * 60 * 1000; // restaremos esto para alinear a EST fija
+
+function getWeekStartEst(now){
+  // Convertimos 'now' (ms epoch UTC) a tiempo local EST fijo restando 5h
+  const estTime = now - EST_OFFSET_MS;
+  const d = new Date(estTime);
+  // Obtener día de la semana en EST (0=Sunday)
+  const day = d.getUTCDay();
+  // Normalizar a domingo 00:00 EST: quitar horas/min/seg/ms y retroceder 'day' días
+  d.setUTCHours(0,0,0,0);
+  const estMidnight = d.getTime() - day * 24 * 60 * 60 * 1000;
+  // Regresamos al epoch UTC sumando offset de nuevo
+  return estMidnight + EST_OFFSET_MS;
+}
 
 function currentWindow(now){
-  const midnight = new Date(now);
-  midnight.setUTCHours(0,0,0,0); // use UTC for consistency
-  const sinceMidnight = now - midnight.getTime();
-  const windowIndex = Math.floor(sinceMidnight / WINDOW_MS);
-  const start = midnight.getTime() + windowIndex * WINDOW_MS;
+  const weekStart = getWeekStartEst(now);
+  const sinceWeekStart = now - weekStart;
+  const windowIndexGlobal = Math.floor(sinceWeekStart / WINDOW_MS); // index dentro de la semana
+  const start = weekStart + windowIndexGlobal * WINDOW_MS;
   const end = start + WINDOW_MS;
-  return { windowIndex, start, end };
+  return { windowIndex: windowIndexGlobal, start, end, weekStart };
 }
 
 function computeState(){
@@ -40,15 +53,18 @@ function computeState(){
     lastWindowStart = win.start;
   }
   const timeToEnd = win.end - now;
-  const lobbyOpensAt = win.end - LOBBY_OPEN_BEFORE_MS;
-  const pickAt = win.end - PICK_BEFORE_MS;
-  const lobbyOpen = now >= lobbyOpensAt;
-  const pickingPhase = now >= pickAt;
-  // Auto-pick if in picking phase and no selection yet but lobby has users
-  if (pickingPhase && !lastSelected && lobby.size){
-    const arr = Array.from(lobby);
-    const chosen = arr[Math.floor(Math.random()*arr.length)];
-    lastSelected = { user: chosen, windowStart: win.start };
+  const lobbyOpen = true;
+  const pickingPhase = false;
+  // At exact start of new window: clear previous selection
+  // At window start selection should already be made from previous window's lobby. We ensure selection for current window by checking lastSelected.windowStart.
+  if (!lastSelected || lastSelected.windowStart !== win.start){
+    if (lobby.size){
+      const arr = Array.from(lobby);
+      const chosen = arr[Math.floor(Math.random()*arr.length)];
+      lastSelected = { user: chosen, windowStart: win.start };
+      // Clear lobby after selecting so new participants can join for next window
+      lobby = new Set();
+    }
   }
   return {
     now,
@@ -56,8 +72,10 @@ function computeState(){
     windowStart: win.start,
     windowEnd: win.end,
     timeToEnd,
-    lobbyOpen,
-    pickingPhase,
+    weekStart: win.weekStart,
+    weekWindowIndex: win.windowIndex,
+  lobbyOpen,
+  pickingPhase, // deprecated (always false)
     lobby: Array.from(lobby),
     currentArtist: lastSelected ? lastSelected.user : null,
     selectionFinal: !!lastSelected,
@@ -81,8 +99,7 @@ export default async function handler(req,res){
     }
     const st = computeState();
     switch(action){
-      case 'join':
-        if(!st.lobbyOpen) return res.status(400).json({ error:'lobby not open' });
+  case 'join':
         lobby.add(user);
         return res.status(200).json(computeState());
       case 'leave':
@@ -97,12 +114,13 @@ export default async function handler(req,res){
         // Clearing selection early ends artist's exclusive window (but next window not started yet) -> allow re-open lobby until pick time again? Simplicity: just keep same selection.
         return res.status(200).json({ ok:true });
       case 'fastForwardLobby':
-        // Move virtual time so that we are exactly lobby open moment (10m before end)
         {
-          const target = st.windowEnd - LOBBY_OPEN_BEFORE_MS + 1000; // just inside lobby window
-          const delta = target - st.now;
-          timeOffsetMs += delta;
-          return res.status(200).json(computeState());
+          // Force jump to next window start, select immediately
+          const nextWindowStart = st.windowEnd;
+            const delta = (nextWindowStart + 1000) - st.now;
+            timeOffsetMs += delta;
+            // After adjusting time, a computeState call will auto select from lobby (if any)
+            return res.status(200).json(computeState());
         }
       default:
         return res.status(400).json({ error:'unknown action' });

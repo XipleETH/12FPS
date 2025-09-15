@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronLeft, ChevronRight, MoveUp, MoveDown, Save, Trash2, Undo2, Pencil, Eraser, PaintBucket, Play, Clock } from 'lucide-react';
+import { ChevronLeft, ChevronRight, MoveUp, MoveDown, Save, Trash2, Undo2, Pencil, Eraser, PaintBucket, Clock } from 'lucide-react';
 
 export type PanelKey = 'actions' | 'tools' | 'brushSize' | 'brushMode' | 'palette';
 
@@ -24,10 +24,13 @@ interface SidePanelsProps {
   onUndo?: () => void;
   disabled?: boolean;
   // session controls
-  timeLeft?: number;
-  isSessionActive?: boolean;
-  onStartSession?: () => void;
-  onForceEnd?: () => void;
+  timeLeft?: number; // seconds until window end
+  onFastForwardLobby?: () => void;
+  showFastForward?: boolean;
+  // Turn/lobby new props
+  joinLobbyButton?: React.ReactNode;
+  leaveLobbyButton?: React.ReactNode;
+  isArtist?: boolean; // whether local user is current artist
 }
 
 const PanelWrapper: React.FC<{
@@ -77,9 +80,10 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
   onUndo,
   disabled,
   timeLeft,
-  isSessionActive,
-  onStartSession,
-  onForceEnd,
+  onFastForwardLobby,
+  showFastForward,
+  joinLobbyButton,
+  leaveLobbyButton,
 }) => {
   const move = (key: PanelKey, dir: -1 | 1) => {
     const idx = order.indexOf(key);
@@ -121,17 +125,15 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
               <div className="flex items-center justify-center gap-2 text-white/90 text-[11px] font-mono">
                 <Clock className="w-4 h-4 text-white/80" />
                 <span>{new Date(timeLeft * 1000).toISOString().substring(11,19)}</span>
-                {!isSessionActive && timeLeft > 0 && (
-                  <button onClick={onStartSession} className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-500/80 hover:bg-green-500 text-white text-[11px] font-semibold">
-                    <Play className="w-3.5 h-3.5" />
-                    Start
-                  </button>
-                )}
-                {isSessionActive && (
-                  <button onClick={onForceEnd} className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/80 hover:bg-red-500 text-white text-[11px] font-semibold" title="Terminar sesión ahora">
-                    End
-                  </button>
-                )}
+                <div className="flex items-center gap-2">
+                  {joinLobbyButton}
+                  {leaveLobbyButton}
+                  {showFastForward && (
+                    <button onClick={onFastForwardLobby} className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500/80 hover:bg-blue-500 text-white text-[11px] font-semibold" title="Fast-forward">
+                      FF
+                    </button>
+                  )}
+                </div>
               </div>
             )}
           </div>
