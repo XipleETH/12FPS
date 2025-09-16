@@ -125,11 +125,172 @@ router.post('/internal/menu/post-create', async (_req, res): Promise<void> => {
   }
 });
 
+// --- Simple 2h window turn system (local Reddit-only) ---
+interface TurnState {
+  currentArtist: string | null;
+  windowStart: number; // ms
+  windowEnd: number;   // ms
+  started: boolean;
+  pendingFrame?: { dataUrl: string; updated: number } | null;
+}
+
+const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+const TURN_KEY = 'turn:current';
+
+async function loadTurn(): Promise<TurnState> {
+  const raw = await redis.get(TURN_KEY);
+  const now = Date.now();
+  if (raw) {
+    try {
+      const parsed: TurnState = JSON.parse(raw);
+      // Reset window if expired
+      if (now >= parsed.windowEnd) {
+        return await resetTurnWindow();
+      }
+      return parsed;
+    } catch {
+      return await resetTurnWindow();
+    }
+  }
+  return await resetTurnWindow();
+}
+
+async function resetTurnWindow(): Promise<TurnState> {
+  const now = Date.now();
+  const start = now; // start immediately when reset
+  const end = start + TWO_HOURS_MS;
+  const state: TurnState = { currentArtist: null, windowStart: start, windowEnd: end, started: false, pendingFrame: null };
+  await redis.set(TURN_KEY, JSON.stringify(state));
+  return state;
+}
+
+async function saveTurn(state: TurnState) {
+  await redis.set(TURN_KEY, JSON.stringify(state));
+}
+
+router.get('/api/turn', async (_req, res) => {
+  try {
+    const state = await loadTurn();
+    const now = Date.now();
+    const timeToEndSeconds = Math.max(0, Math.floor((state.windowEnd - now)/1000));
+    res.json({
+      currentArtist: state.currentArtist,
+      windowStart: state.windowStart,
+      windowEnd: state.windowEnd,
+      started: state.started,
+      timeToEndSeconds
+    });
+  } catch(e:any) {
+    console.error('[turn:get] error', e?.message);
+    res.status(500).json({ error: 'turn failed' });
+  }
+});
+
+router.post('/api/turn', async (_req, res) => {
+  try {
+    const username = await reddit.getCurrentUsername() || 'anonymous';
+    let state = await loadTurn();
+    const now = Date.now();
+    // If window expired, reset then allow claim
+    if (now >= state.windowEnd) {
+      state = await resetTurnWindow();
+    }
+    if (!state.started || !state.currentArtist) {
+      // first come first serve claim
+      state.currentArtist = username;
+      state.started = true;
+      await saveTurn(state);
+      return res.json({ ok: true, claimed: true, currentArtist: state.currentArtist });
+    }
+    return res.json({ ok: true, claimed: false, currentArtist: state.currentArtist });
+  } catch(e:any) {
+    console.error('[turn:post] error', e?.message);
+    res.status(500).json({ error: 'turn claim failed' });
+  }
+});
+
+// Pending frame endpoints (local storage per window)
+router.get('/api/pending-frame', async (_req, res) => {
+  try {
+    const state = await loadTurn();
+    if (state.pendingFrame) {
+      return res.json({ pending: { url: state.pendingFrame.dataUrl, lastModified: state.pendingFrame.updated } });
+    }
+    res.json({ pending: null });
+  } catch(e:any) {
+    console.error('[pending:get] error', e?.message);
+    res.status(500).json({ error: 'pending failed' });
+  }
+});
+
+router.post('/api/pending-frame', async (req, res) => {
+  try {
+    const username = await reddit.getCurrentUsername() || 'anonymous';
+    let state = await loadTurn();
+    if (username !== state.currentArtist) return res.status(403).json({ error: 'not artist' });
+    const { dataUrl } = req.body || {};
+    if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/png')) return res.status(400).json({ error: 'invalid dataUrl' });
+    state.pendingFrame = { dataUrl, updated: Date.now() };
+    await saveTurn(state);
+    res.json({ ok: true });
+  } catch(e:any) {
+    console.error('[pending:post] error', e?.message);
+    res.status(500).json({ error: 'pending store failed' });
+  }
+});
+
+router.delete('/api/pending-frame', async (_req, res) => {
+  try {
+    let state = await loadTurn();
+    state.pendingFrame = null;
+    await saveTurn(state);
+    res.json({ ok: true });
+  } catch(e:any) {
+    console.error('[pending:delete] error', e?.message);
+    res.status(500).json({ error: 'pending delete failed' });
+  }
+});
+
+// Finalize current turn: persist pending frame (if exists) into Redis frame list and reset window
+router.post('/api/finalize-turn', async (_req, res) => {
+  try {
+    let state = await loadTurn();
+    const { postId } = context;
+    if (!postId) return res.status(400).json({ error: 'post not found' });
+    // Persist pending frame if present
+    if (state.pendingFrame && state.currentArtist) {
+      const frameData: StoredFrame = {
+        key: `frames/${Date.now().toString(36)}.png`,
+        dataUrl: state.pendingFrame.dataUrl,
+        timestamp: Date.now(),
+        artist: state.currentArtist
+      };
+      // store frame
+      await redis.set(`frames:data:${postId}:${frameData.key}`, JSON.stringify(frameData));
+      // update list
+      const frameKeysStr = await redis.get(`frames:list:${postId}`);
+      const frameKeys: string[] = frameKeysStr ? JSON.parse(frameKeysStr) : [];
+      frameKeys.push(frameData.key);
+      await redis.set(`frames:list:${postId}`, JSON.stringify(frameKeys));
+    }
+    // Reset window so Start Turn is available immediately
+    state = await resetTurnWindow();
+    await saveTurn(state);
+    res.json({ ok: true, reset: true });
+  } catch(e:any) {
+    console.error('[finalize-turn] error', e?.message);
+    res.status(500).json({ error: 'finalize failed' });
+  }
+});
+
+// Removed external proxy overrides to ensure purely local Reddit-only operation.
+
 // --- Redis-based persistent storage for frames (shared across all users) ---
 interface StoredFrame {
   key: string;
   dataUrl: string; // store the full data URL
   timestamp: number;
+  artist: string; // reddit username of creator
 }
 
 // List frames from Redis storage
@@ -151,7 +312,8 @@ router.get('/r2/frames', async (_req, res) => {
         frames.push({
           key: frameData.key,
           url: frameData.dataUrl, // return data URL directly
-          lastModified: frameData.timestamp
+          lastModified: frameData.timestamp,
+          artist: frameData.artist || 'anonymous'
         });
       }
     }
@@ -214,10 +376,12 @@ router.post('/r2/upload-frame', async (req, res) => {
     const key = `frames/${id}.png`;
     
     // Store frame data in Redis
+    const username = await reddit.getCurrentUsername();
     const frameData: StoredFrame = {
       key,
       dataUrl,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      artist: username || 'anonymous'
     };
     
     await redis.set(`frames:data:${postId}:${key}`, JSON.stringify(frameData));
@@ -255,7 +419,8 @@ router.get('/api/list-frames', async (_req, res) => {
         frames.push({
           key: frameData.key,
           url: frameData.dataUrl, // return data URL directly
-          lastModified: frameData.timestamp
+          lastModified: frameData.timestamp,
+          artist: frameData.artist || 'anonymous'
         });
       }
     }
@@ -396,7 +561,17 @@ router.get('/api/voting-stats', async (_req, res) => {
   }
 });
 
-// Get current user info
+// Minimal alias for quick user resolution (must be outside other handler)
+router.get('/api/whoami', async (_req, res) => {
+  try {
+    const u = await reddit.getCurrentUsername();
+    res.json({ username: u || null });
+  } catch(e:any){
+    res.json({ username: null });
+  }
+});
+
+// Get current user info (verbose)
 router.get('/api/user', async (_req, res) => {
   try {
     const username = await reddit.getCurrentUsername();
@@ -406,7 +581,8 @@ router.get('/api/user', async (_req, res) => {
     console.error('[devvit api/user] error', e?.message);
     res.json({ username: null, error: e?.message });
   }
-});// Use router middleware
+});
+// Use router middleware
 app.use(router);
 
 // Debug endpoint to inspect devvit context quickly
@@ -516,10 +692,12 @@ app.post('/api/r2/upload-frame', (req,res)=>{
       const key = `frames/${id}.png`;
       
       // Store frame data in Redis
-      const frameData = {
+      const username = await reddit.getCurrentUsername();
+      const frameData: StoredFrame = {
         key,
         dataUrl,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        artist: username || 'anonymous'
       };
       
       await redis.set(`frames:data:${postId}:${key}`, JSON.stringify(frameData));

@@ -17,7 +17,17 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
     });
   };
 
-  if (frames.length === 0 && !pendingFrame) {
+  // Dedupe: if pending frame image matches the last published frame image, suppress it
+  let showPending = false;
+  if (pendingFrame) {
+    if (frames.length === 0) showPending = true; else {
+      const lastImg = frames[frames.length - 1].imageData.split('?')[0];
+      const pendingImg = pendingFrame.imageData.split('?')[0];
+      showPending = lastImg !== pendingImg;
+    }
+  }
+
+  if (frames.length === 0 && !showPending) {
     return (
       <div className="text-center py-16">
         <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-12 border border-white/20 max-w-md mx-auto">
@@ -36,12 +46,12 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
       <div className="text-center">
         <h2 className="text-4xl font-bold text-white mb-4">Frame Gallery</h2>
         <p className="text-white/70 text-lg">
-          {frames.length} frames published{pendingFrame ? ' • 1 in progress' : ''}
+          {frames.length} frames published{showPending ? ' • 1 in progress' : ''}
         </p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-  {pendingFrame && (
+  {showPending && pendingFrame && (
           <div
             className="relative bg-white/10 backdrop-blur-sm rounded-2xl overflow-hidden border border-yellow-400/40 hover:bg-white/20 transition-all duration-300"
           >

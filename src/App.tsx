@@ -20,17 +20,8 @@ export interface Frame {
 }
 
 function App() {
-  // Producción (Vercel) origin – ajustar si cambia tu dominio
-  const PROD_ORIGIN = 'https://12-fps.vercel.app';
-  const PROD_HOST = '12-fps.vercel.app';
-  // Si NO estamos ya en el host de producción (ej: localhost, frame en reddit, cualquier otro dominio) usamos el origin absoluto
-  const API_BASE = (typeof window !== 'undefined' && window.location.hostname === PROD_HOST) ? '' : PROD_ORIGIN;
-  // Prefija solo rutas /api/ cuando necesitamos origen absoluto
-  const prefixIfLocal = (url: string) => {
-    if (!API_BASE) return url; // ya estamos en prod host => relativo funciona
-    if (url.startsWith('/api/')) return API_BASE + url;
-    return url;
-  };
+  // Reddit-only build: always use relative /api/* endpoints served by Devvit proxy/server
+  const prefixIfLocal = (url: string) => url;
   // Iframe embedding detection
   const [isEmbedded, setIsEmbedded] = useState<boolean>(() => {
     try { return typeof window !== 'undefined' && window.self !== window.top; } catch { return false; }
@@ -61,8 +52,7 @@ function App() {
   // Shared pending frame (from server)
   const [sharedPending, setSharedPending] = useState<{ imageData: string; timestamp: number; etag?: string } | null>(null);
   // Estado para último error de subida
-  const [lastUploadError, setLastUploadError] = useState<string | null>(null);
-  const [uploadDebug, setUploadDebug] = useState<{ key?: string; signedUrl?: string; putStatus?: number } | null>(null);
+  // Removed upload error/debug state (no external uploads)
   const [currentView, setCurrentView] = useState<'draw' | 'gallery' | 'video' | 'voting' | 'chat'>('draw');
   const [timeLeft, setTimeLeft] = useState<number>(0); // seconds until current 2h window end
   const [sessionStartTs, setSessionStartTs] = useState<number | null>(null); // when current artist window started
@@ -78,6 +68,7 @@ function App() {
   const [currentUser, setCurrentUser] = useState<string>('anonymous');
   const [turnInfo, setTurnInfo] = useState<any>(null);
   const [lobbyActionLoading, setLobbyActionLoading] = useState(false);
+  // Artist readiness removed; first click claims turn
   // debugMode removed (fast forward no longer used)
 
   // fastForward removed
@@ -117,12 +108,30 @@ function App() {
     } catch {}
   }, []);
 
+  // Override with Reddit username when embedded in Reddit via Devvit endpoint
+  useEffect(() => {
+    if (!isEmbedded || embedContext !== 'reddit') return;
+    let aborted = false;
+    (async () => {
+      try {
+  const r = await fetch('/api/whoami'); // stays relative inside reddit embed
+        if (!r.ok) return;
+        const j = await r.json();
+        if (!aborted && j && j.username) {
+          setCurrentUser(j.username);
+          try { localStorage.setItem('12fps:user', j.username); } catch {}
+        }
+      } catch {}
+    })();
+    return () => { aborted = true; };
+  }, [isEmbedded, embedContext]);
+
   // Poll turn info every 15s
   useEffect(() => {
     let id: number | null = null;
     const fetchTurn = async () => {
       try {
-        const r = await fetch('/api/turn');
+  const r = await fetch(prefixIfLocal('/api/turn'));
         if(!r.ok) return;
         const j = await r.json();
         setTurnInfo(j);
@@ -137,7 +146,6 @@ function App() {
   useEffect(() => {
     if (!turnInfo) return;
     if (turnInfo.currentArtist) {
-      // if artist just selected or changed, record start
       setSessionStartTs(turnInfo.windowStart);
     }
   }, [turnInfo?.currentArtist, turnInfo?.windowStart]);
@@ -189,69 +197,12 @@ function App() {
   }, []);
 
   // Sube un dataURL al backend (con soporte interno Reddit /r2/upload-frame)
-  async function uploadDataUrlPNG(dataUrl: string): Promise<{ url: string; key?: string } | null> {
-    try {
-      const isReddit = isEmbedded && embedContext === 'reddit';
-      if (isReddit) {
-        // Intenta varias rutas porque la plataforma puede exponer el server con distintos prefijos
-        const candidates = [
-          '/api/r2/upload-frame', // preferido si /api/* está expuesto
-          '/r2/upload-frame',     // ruta directa (puede mapear a /webapi/r2/...)
-          '/webapi/r2/upload-frame' // en caso de que el host no reescriba automáticamente
-        ];
-        for (const p of candidates) {
-          try {
-            console.log('[upload:reddit] try', p);
-            const r = await fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dataUrl }) });
-            if (!r.ok) { 
-              console.log('[upload:reddit] status', p, r.status); 
-              // Log response body for debugging 500 errors
-              try {
-                const errorText = await r.text();
-                console.log('[upload:reddit] error body', p, errorText);
-              } catch {}
-              continue; 
-            }
-            const j = await r.json();
-            if (j && !j.error) {
-              console.log('[upload:reddit] success via', p);
-              setUploadDebug({ key: j.key, putStatus: 200 });
-              setLastUploadError(null);
-              return { key: j.key, url: j.url };
-            }
-          } catch (e) { console.log('[upload:reddit] exception', p, (e as any)?.message); }
-        }
-        setLastUploadError('reddit internal upload failed (all candidates 404)');
-        return null;
-      }
-      console.log('[upload] invoking /api/upload-frame');
-      const resp = await fetch(`${API_BASE}/api/upload-frame`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dataUrl, prefix: 'frames' }) });
-      if (!resp.ok) {
-        let detail = '';
-        try { detail = await resp.text(); } catch {}
-        setLastUploadError(`upload-frame failed ${resp.status} ${detail.slice(0,140)}`);
-        return null;
-      }
-      const json = await resp.json();
-      if (json.error) {
-        setLastUploadError(`upload error: ${json.message || json.error}`);
-        return null;
-      }
-      const { key, url } = json;
-      const finalUrl = prefixIfLocal(url);
-      setUploadDebug({ key, putStatus: 200 });
-      setLastUploadError(null);
-      return { key, url: finalUrl };
-    } catch (e) {
-      setLastUploadError(`exception upload-frame: ${(e as any)?.message || e}`);
-      return null;
-    }
-  }
+  // Removed legacy uploadDataUrlPNG (external uploads disabled).
 
   // Guardar dentro de la sesión: solo cache local, no subir
   const saveFrame = useCallback(() => {
     // Only artist can save
-    if (!canvasRef.current || !(turnInfo && turnInfo.currentArtist === currentUser)) return;
+  if (!canvasRef.current || !(turnInfo && turnInfo.currentArtist === currentUser)) return;
     const dataUrl = canvasRef.current.toDataURL('image/png');
     setPendingFrameDataUrl(dataUrl);
   // Clearing draft after an intentional save (we treat this as commit-in-progress but keep local draft in case finalize fails)
@@ -259,73 +210,51 @@ function App() {
     // Fire-and-forget upload to shared pending endpoint
     (async () => {
       try {
-        await fetch('/api/pending-frame', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dataUrl }) });
+  await fetch(prefixIfLocal('/api/pending-frame'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dataUrl }) });
       } catch {}
     })();
   }, [turnInfo, currentUser, persistDraft]);
 
   // Al finalizar la sesión se sube la última imagen cacheada
-  const finalizingRef = useRef(false);
-  const finalizeSessionUpload = useCallback(async () => {
-    if (finalizingRef.current) return; // guard duplicado
-    if (!pendingFrameDataUrl) {
-      // Intentar capturar automáticamente si el usuario nunca guardó
-      if (canvasRef.current) {
-        console.log('[finalize] no pending frame, capturando canvas actual');
-        try {
-          const autoUrl = canvasRef.current.toDataURL('image/png');
-          setPendingFrameDataUrl(autoUrl);
-          // seguir usando esa recien capturada
-        } catch (e) {
-          console.error('[finalize] error capturando canvas', e);
-          return;
-        }
-      } else {
-        console.warn('[finalize] no canvas ref para capturar');
-        return;
-      }
-    }
-    finalizingRef.current = true;
-    try {
-      const target = pendingFrameDataUrl || (canvasRef.current ? canvasRef.current.toDataURL('image/png') : null);
-      if (!target) {
-        console.error('[finalize] no frame data to upload');
-        return;
-      }
-      console.log('[finalize] iniciando subida frame final');
-      const uploaded = await uploadDataUrlPNG(target);
-      if (!uploaded) {
-        console.warn('[finalize] upload result null');
-        return;
-      }
-      const newFrame: Frame = {
-        id: uploaded.key || Date.now().toString(),
-        key: uploaded.key,
-        imageData: uploaded.url,
-        timestamp: Date.now(),
-        artist: `Artist ${Math.floor(Math.random() * 100)}`,
-        paletteWeek: currentWeek
-      };
-      setFrames(prev => {
-        // Evitar duplicados por key
-        if (newFrame.key && prev.some(f => f.key === newFrame.key)) return prev;
-        return [...prev, newFrame];
-      });
-      setPendingFrameDataUrl(null);
-      setLastUploadError(null);
-      console.log('[finalize] subida exitosa');
-  // Clear shared pending on success
-  try { fetch('/api/pending-frame', { method: 'DELETE' }); } catch {}
-    } finally {
-      finalizingRef.current = false;
-    }
-  }, [pendingFrameDataUrl, currentWeek]);
+  // finalizingRef removed with legacy finalize code.
+  // Removed legacy finalizeSessionUpload (external upload disabled). ForceEndSession now handles finalize.
 
   const forceEndSession = useCallback(() => {
-    // manual finalize by current artist (debug/testing)
     if (!(turnInfo && turnInfo.currentArtist === currentUser)) return;
-    finalizeSessionUpload();
-  }, [turnInfo, currentUser, finalizeSessionUpload]);
+    (async () => {
+      try {
+        // Capture current canvas into pending-frame first
+        if (canvasRef.current) {
+          try {
+            const dataUrl = canvasRef.current.toDataURL('image/png');
+            await fetch('/api/pending-frame', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dataUrl }) });
+          } catch {}
+        }
+        await fetch('/api/finalize-turn', { method: 'POST' });
+        const r = await fetch('/api/turn');
+        if (r.ok) setTurnInfo(await r.json());
+  // Clear local pending caches
+  setPendingFrameDataUrl(null);
+  setSharedPending(null);
+        // Reload frames list to include newly finalized frame
+        const lf = await fetch('/api/list-frames');
+        if (lf.ok) {
+          const data = await lf.json();
+          if (Array.isArray(data.frames)) {
+            const loaded: Frame[] = data.frames.map((o: any) => ({
+              id: o.key || o.id || Math.random().toString(36).slice(2),
+              key: o.key,
+              imageData: o.url,
+              timestamp: o.lastModified || Date.now(),
+              artist: o.artist || 'anonymous',
+              paletteWeek: currentWeek
+            }));
+            setFrames(loaded);
+          }
+        }
+      } catch {}
+    })();
+  }, [turnInfo, currentUser, currentWeek]);
 
   // Poll shared pending frame every 10s when drawing or viewing gallery
   useEffect(() => {
@@ -334,7 +263,7 @@ function App() {
     if (active) {
       const fetchPending = async () => {
         try {
-          const r = await fetch('/api/pending-frame');
+          const r = await fetch(prefixIfLocal('/api/pending-frame'));
           if (!r.ok) return;
           const j = await r.json();
           if (j && j.pending && j.pending.url) {
@@ -360,23 +289,26 @@ function App() {
   useEffect(() => {
     if (!turnInfo) return;
     if (prevArtistRef.current && prevArtistRef.current === currentUser && prevArtistRef.current !== turnInfo.currentArtist) {
-      // artist changed away from us -> ensure finalize attempted
-      finalizeSessionUpload();
+      // Artist switched; ensure any pending frame is finalized via server finalize endpoint
+      forceEndSession();
     }
     prevArtistRef.current = turnInfo.currentArtist;
-  }, [turnInfo?.currentArtist, finalizeSessionUpload, currentUser]);
+  }, [turnInfo?.currentArtist, forceEndSession, currentUser]);
 
   useEffect(() => {
-    if (timeLeft === 0 && turnInfo && turnInfo.currentArtist === currentUser) {
-      finalizeSessionUpload();
+    if (timeLeft === 0 && turnInfo && turnInfo.currentArtist) {
+      // Auto finalize once when window hits zero by current artist (best-effort)
+      if (turnInfo.currentArtist === currentUser) {
+        forceEndSession();
+      }
     }
-  }, [timeLeft, turnInfo?.currentArtist, currentUser, finalizeSessionUpload]);
+  }, [timeLeft, turnInfo?.currentArtist, currentUser, forceEndSession]);
 
   // Cargar frames existentes desde el backend (R2 listing)
   useEffect(() => {
     (async () => {
       try {
-        const resp = await fetch('/api/list-frames');
+    const resp = await fetch(prefixIfLocal('/api/list-frames'));
         if (!resp.ok) return;
         const data = await resp.json();
         if (Array.isArray(data.frames)) {
@@ -385,7 +317,7 @@ function App() {
             key: o.key,
             imageData: o.url,
             timestamp: o.lastModified || Date.now(),
-            artist: o.artist || 'Artist',
+            artist: o.artist || 'anonymous',
             paletteWeek: currentWeek
           }));
           setFrames(loaded);
@@ -445,24 +377,15 @@ function App() {
   <div className="max-w-6xl mx-auto px-3 pb-4">
         {/* Turn / Lobby banner */}
         {turnInfo && (
-          <div className="mb-4 text-xs text-white/80 bg-white/10 border border-white/20 rounded-lg p-3 flex flex-wrap gap-3 items-center">
+          <div className="mb-4 text-xs text-white/80 bg-white/10 border border-white/20 rounded-lg p-3 flex flex-wrap gap-4 items-center">
             <div><span className="font-semibold">User:</span> {currentUser}</div>
             <div><span className="font-semibold">Artist:</span> {turnInfo.currentArtist || '—'}</div>
-            <div><span className="font-semibold">Lobby:</span> {turnInfo.lobby?.length || 0}</div>
-            <div><span className="font-semibold">Lobby Open:</span> {turnInfo.lobbyOpen ? 'yes' : `in ${Math.max(0, Math.floor((turnInfo.lobbyOpensIn||0)/60000))}m`}</div>
-            <div><span className="font-semibold">Pick:</span> {turnInfo.pickingPhase ? 'choosing' : `in ${Math.max(0, Math.floor((turnInfo.pickIn||0)/60000))}m`}</div>
-            {turnInfo.lobbyOpen && !turnInfo.selectionFinal && (
-              <div className="flex gap-2">
-                {!turnInfo.lobby.includes(currentUser) && (
-                  <button disabled={lobbyActionLoading} onClick={async ()=>{ setLobbyActionLoading(true); try{ await fetch('/api/turn',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'join', user: currentUser })}); } finally { setLobbyActionLoading(false);} }} className="px-2 py-1 bg-green-600/70 hover:bg-green-600 text-white rounded text-xs">Join lobby</button>
-                )}
-                {turnInfo.lobby.includes(currentUser) && (
-                  <button disabled={lobbyActionLoading} onClick={async ()=>{ setLobbyActionLoading(true); try{ await fetch('/api/turn',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'leave', user: currentUser })}); } finally { setLobbyActionLoading(false);} }} className="px-2 py-1 bg-yellow-600/70 hover:bg-yellow-600 text-white rounded text-xs">Leave</button>
-                )}
-              </div>
+            <div><span className="font-semibold">Ends in:</span> {new Date(timeLeft * 1000).toISOString().substring(11,19)}</div>
+            {!turnInfo.currentArtist && timeLeft > 0 && (
+              <button disabled={lobbyActionLoading} onClick={async ()=>{ setLobbyActionLoading(true); try { await fetch('/api/turn',{ method:'POST'}); const r= await fetch('/api/turn'); if(r.ok) setTurnInfo(await r.json()); } finally { setLobbyActionLoading(false);} }} className="px-3 py-1 bg-emerald-600/80 hover:bg-emerald-600 text-white rounded-md text-xs font-semibold shadow">Start Turn</button>
             )}
             {turnInfo.currentArtist === currentUser && (
-              <button onClick={forceEndSession} className="ml-auto px-2 py-1 bg-red-600/70 hover:bg-red-600 text-white rounded text-xs">Finalize (debug)</button>
+              <button onClick={forceEndSession} className="px-2 py-1 bg-red-600/70 hover:bg-red-600 text-white rounded text-xs">Finalize (debug)</button>
             )}
           </div>
         )}
@@ -486,11 +409,8 @@ function App() {
               onUndo={undo}
               disabled={!(turnInfo && turnInfo.currentArtist === currentUser) || timeLeft === 0}
               timeLeft={timeLeft}
-              lobbyToggleButton={turnInfo && turnInfo.lobby ? (
-                turnInfo.lobby.includes(currentUser)
-                  ? <button disabled={lobbyActionLoading} onClick={async ()=>{ setLobbyActionLoading(true); try{ await fetch('/api/turn',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'leave', user: currentUser })}); const r= await fetch('/api/turn'); if(r.ok) setTurnInfo(await r.json()); } finally { setLobbyActionLoading(false);} }} className="px-2 py-0.5 bg-yellow-500/80 hover:bg-yellow-500 text-white rounded-full text-[11px]">Salir</button>
-                  : <button disabled={lobbyActionLoading} onClick={async ()=>{ setLobbyActionLoading(true); try{ await fetch('/api/turn',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'join', user: currentUser })}); const r= await fetch('/api/turn'); if(r.ok) setTurnInfo(await r.json()); } finally { setLobbyActionLoading(false);} }} className="px-2 py-0.5 bg-green-600/80 hover:bg-green-600 text-white rounded-full text-[11px]">Unirme</button>
-              ) : null}
+              lobbyToggleButton={null}
+              artistActionButton={null}
             />
             <div ref={canvasCardRef}>
               <div className="flex items-start gap-4">
@@ -590,18 +510,7 @@ function App() {
             pendingFrame={(pendingFrameDataUrl || sharedPending) ? { imageData: pendingFrameDataUrl || sharedPending!.imageData, startedAt: sessionStartTs || sharedPending?.timestamp || Date.now() } : null}
           />
         )}
-        {lastUploadError && (
-          <div className="mt-4 text-xs text-red-300 font-mono break-all">
-            upload error: {lastUploadError}
-          </div>
-        )}
-        {uploadDebug && (
-          <div className="mt-2 text-[10px] text-white/50 font-mono break-all space-y-1">
-            <div>key: {uploadDebug.key || '—'}</div>
-            <div>putStatus: {uploadDebug.putStatus ?? '—'}</div>
-            <div className="truncate">signedUrl: {uploadDebug.signedUrl?.slice(0,80)}...</div>
-          </div>
-        )}
+  {/* Upload debug panels removed */}
 
         {currentView === 'video' && (
           <VideoPlayer frames={frames} />
