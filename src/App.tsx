@@ -66,7 +66,8 @@ function App() {
   const [currentView, setCurrentView] = useState<'draw' | 'gallery' | 'video' | 'voting' | 'chat'>('draw');
   const [timeLeft, setTimeLeft] = useState<number>(0); // seconds until current 2h window end
   const [sessionStartTs, setSessionStartTs] = useState<number | null>(null); // when current artist window started
-  const [currentWeek] = useState(1);
+  const [currentWeek,setCurrentWeek] = useState<number>(1);
+  const [weekEndSeconds,setWeekEndSeconds] = useState<number>(0);
   const [paletteSide, setPaletteSide] = useState<'left' | 'right'>('right');
   // Brush system disabled (presets & styles removed)
   const [panelsOrder, setPanelsOrder] = useState<PanelKey[]>(['actions','tools','brushSize','brushMode','palette']);

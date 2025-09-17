@@ -1,0 +1,40 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { Frame } from '../App';
+
+interface WeekVideoProps {
+  frames: Frame[]; // frames belonging to a single week, chronological ascending
+  fps?: number;
+  autoPlay?: boolean;
+  loop?: boolean;
+  title?: string;
+}
+
+export const WeekVideo: React.FC<WeekVideoProps> = ({ frames, fps = 12, autoPlay = true, loop = true, title }) => {
+  const [index,setIndex] = useState(0);
+  const timerRef = useRef<number | null>(null);
+
+  useEffect(()=>{
+    if(!autoPlay || frames.length===0) return; 
+    if(timerRef.current) window.clearInterval(timerRef.current);
+    timerRef.current = window.setInterval(()=>{
+      setIndex(i=>{
+        const next = i+1; 
+        if(next >= frames.length) return loop ? 0 : i; 
+        return next; 
+      });
+    }, 1000/fps);
+    return ()=>{ if(timerRef.current) window.clearInterval(timerRef.current); };
+  },[autoPlay, fps, frames.length, loop]);
+
+  const current = frames[index];
+  return (
+    <div className="flex flex-col items-center">
+      {title && <div className="text-white/80 text-xs mb-1">{title}</div>}
+      <div className="relative aspect-[540/740] bg-black/40 rounded-xl overflow-hidden border border-white/15 flex items-center justify-center w-40">
+        {current && <img src={current.imageData} alt="week frame" className="object-contain max-w-full max-h-full" />}
+        {frames.length===0 && <div className="text-white/30 text-xs">No frames</div>}
+      </div>
+      <div className="mt-1 text-[10px] text-white/50">{frames.length} f</div>
+    </div>
+  );
+};

@@ -13,19 +13,26 @@ app.use(express.urlencoded({ extended: true }));
 // Middleware for plain text body parsing
 app.use(express.text());
 
+// --- Weekly cycle utilities ---
+const WEEK_BASE_EPOCH = Date.UTC(2025,0,5,5,1,0,0); // 2025-01-05 00:01 ET approx
+const WEEK_MS = 7*24*60*60*1000;
+const CURRENT_WEEK_KEY = 'week:current:number';
+const WEEK_PROPOSALS_KEY = (postId:string, w:number)=>`proposals:${postId}:week:${w}`;
+const WEEK_WINNERS_KEY = (postId:string, w:number)=>`week:winners:${postId}:${w}`;
+function getWeekNumber(now=Date.now()){ if(now < WEEK_BASE_EPOCH) return 1; return Math.floor((now-WEEK_BASE_EPOCH)/WEEK_MS)+1; }
+function getWeekBoundaries(week:number){ const startMs = WEEK_BASE_EPOCH + (week-1)*WEEK_MS; return { startMs, endMs: startMs + WEEK_MS - 1 }; }
+function pickWinner<T extends { votes:number; proposedAt:number }>(items:T[]):T|undefined { return items.reduce((b,i)=>{ if(!b) return i; if(i.votes>b.votes) return i; if(i.votes===b.votes && i.proposedAt < b.proposedAt) return i; return b; }, undefined as T|undefined); }
+async function ensureCurrentWeek():Promise<number>{ const v = await redis.get(CURRENT_WEEK_KEY); if(v) return parseInt(v); const n = getWeekNumber(); await redis.set(CURRENT_WEEK_KEY, n.toString()); return n; }
+
 const router = express.Router();
 
 router.get<{ postId: string }, InitResponse | { status: string; message: string }>(
   '/api/init',
   async (_req, res): Promise<void> => {
     const { postId } = context;
-
     if (!postId) {
       console.error('API Init Error: postId not found in devvit context');
-      res.status(400).json({
-        status: 'error',
-        message: 'postId is required but missing from context',
-      });
+      res.status(400).json({ status: 'error', message: 'postId is required but missing from context' });
       return;
     }
 
@@ -57,18 +64,10 @@ router.post<{ postId: string }, IncrementResponse | { status: string; message: s
   async (_req, res): Promise<void> => {
     const { postId } = context;
     if (!postId) {
-      res.status(400).json({
-        status: 'error',
-        message: 'postId is required',
-      });
+      res.status(400).json({ status: 'error', message: 'postId is required' });
       return;
     }
-
-    res.json({
-      count: await redis.incrBy('count', 1),
-      postId,
-      type: 'increment',
-    });
+    res.json({ count: await redis.incrBy('count', 1), postId, type: 'increment' });
   }
 );
 
@@ -436,17 +435,17 @@ router.get('/api/list-frames', async (_req, res) => {
 // --- Voting System Endpoints ---
 
 // Get all proposals for voting
-router.get('/api/proposals', async (_req, res) => {
+router.get('/api/proposals', async (req, res) => {
   try {
     const { postId } = context;
     if (!postId) return res.json({ proposals: [] });
-    
-    // Get proposals from Redis
-    const proposalsStr = await redis.get(`proposals:${postId}`);
+    const weekParam = req.query.week ? parseInt(String(req.query.week)) : undefined;
+    const currentWeek = await ensureCurrentWeek();
+    const targetWeek = weekParam || currentWeek;
+    const proposalsStr = await redis.get(WEEK_PROPOSALS_KEY(postId, targetWeek));
     const proposals = proposalsStr ? JSON.parse(proposalsStr) : [];
-    
-    res.json({ proposals });
-  } catch(e: any) {
+    res.json({ proposals, week: targetWeek });
+  } catch(e:any){
     console.error('[devvit api/proposals] error', e?.message);
     res.json({ proposals: [] });
   }
@@ -455,109 +454,61 @@ router.get('/api/proposals', async (_req, res) => {
 // Submit a new proposal
 router.post('/api/proposals', async (req, res) => {
   try {
-    const { postId } = context;
-    const { type, title, data } = req.body || {};
-    
+    const { postId } = context; const { type, title, data } = req.body || {};
     if (!postId) return res.status(400).json({ error: 'post not found' });
     if (!type || !title) return res.status(400).json({ error: 'type and title required' });
-    
-    // Get current username from Reddit
     const username = await reddit.getCurrentUsername();
-    
-    const proposal = {
-      id: Date.now().toString(),
-      type, // 'palette', 'theme', 'brushKit'
-      title,
-      data, // palette colors array, theme description, or brush modes array
-      proposedBy: username || 'anonymous',
-      proposedAt: Date.now(),
-      votes: 0,
-      voters: [] // array of usernames who voted
-    };
-    
-    // Get existing proposals and add new one
-    const proposalsStr = await redis.get(`proposals:${postId}`);
+    const week = await ensureCurrentWeek();
+    const proposal = { id: Date.now().toString(), type, title, data, proposedBy: username || 'anonymous', proposedAt: Date.now(), votes: 0, voters: [], week };
+    const proposalsStr = await redis.get(WEEK_PROPOSALS_KEY(postId, week));
     const proposals = proposalsStr ? JSON.parse(proposalsStr) : [];
-    proposals.unshift(proposal); // Add to beginning
-    
-    // Store back to Redis
-    await redis.set(`proposals:${postId}`, JSON.stringify(proposals));
-    
-    console.log('[devvit api/proposals] new proposal added', proposal.id, 'by', username);
+    proposals.unshift(proposal);
+    await redis.set(WEEK_PROPOSALS_KEY(postId, week), JSON.stringify(proposals));
+    console.log('[devvit api/proposals] new proposal added', proposal.id, 'week', week);
     res.json({ ok: true, proposal });
-  } catch(e: any) {
+  } catch(e:any){
     console.error('[devvit api/proposals] error', e?.message);
-    res.status(500).json({ error: 'proposal failed', message: e?.message });
+    res.status(500).json({ error:'proposal failed', message:e?.message });
   }
 });
 
 // Vote on a proposal
-router.post('/api/proposals/:id/vote', async (req, res) => {
+router.post('/api/proposals/:id/vote', async (req,res)=>{
   try {
-    const { postId } = context;
-    const proposalId = req.params.id;
-    
-    if (!postId) return res.status(400).json({ error: 'post not found' });
-    
-    // Get current username from Reddit
-    const username = await reddit.getCurrentUsername();
-    if (!username) return res.status(401).json({ error: 'authentication required' });
-    
-    // Get proposals
-    const proposalsStr = await redis.get(`proposals:${postId}`);
+    const { postId } = context; const proposalId = req.params.id; if(!postId) return res.status(400).json({ error:'post not found' });
+    const username = await reddit.getCurrentUsername(); if(!username) return res.status(401).json({ error:'authentication required' });
+    const week = await ensureCurrentWeek();
+    const proposalsStr = await redis.get(WEEK_PROPOSALS_KEY(postId, week));
     const proposals = proposalsStr ? JSON.parse(proposalsStr) : [];
-    
-    // Find and update proposal
-    const proposal = proposals.find((p: any) => p.id === proposalId);
-    if (!proposal) return res.status(404).json({ error: 'proposal not found' });
-    
-    // Check if user already voted
+    const proposal = proposals.find((p:any)=>p.id===proposalId); if(!proposal) return res.status(404).json({ error:'proposal not found' });
     const hasVoted = proposal.voters.includes(username);
-    
-    if (hasVoted) {
-      // Remove vote
-      proposal.voters = proposal.voters.filter((v: string) => v !== username);
-      proposal.votes = Math.max(0, proposal.votes - 1);
-    } else {
-      // Add vote
-      proposal.voters.push(username);
-      proposal.votes += 1;
-    }
-    
-    // Save back to Redis
-    await redis.set(`proposals:${postId}`, JSON.stringify(proposals));
-    
-    console.log('[devvit api/proposals/vote]', username, hasVoted ? 'removed vote' : 'voted', 'on', proposalId);
-    res.json({ ok: true, voted: !hasVoted, votes: proposal.votes });
-  } catch(e: any) {
+    if(hasVoted){ proposal.voters = proposal.voters.filter((v:string)=>v!==username); proposal.votes = Math.max(0, proposal.votes-1); }
+    else { proposal.voters.push(username); proposal.votes += 1; }
+    await redis.set(WEEK_PROPOSALS_KEY(postId, week), JSON.stringify(proposals));
+    console.log('[devvit api/proposals/vote]', username, hasVoted? 'removed vote':'voted', 'on', proposalId, 'week', week);
+    res.json({ ok:true, voted: !hasVoted, votes: proposal.votes });
+  } catch(e:any){
     console.error('[devvit api/proposals/vote] error', e?.message);
-    res.status(500).json({ error: 'vote failed', message: e?.message });
+    res.status(500).json({ error:'vote failed', message:e?.message });
   }
 });
 
 // Get voting stats
-router.get('/api/voting-stats', async (_req, res) => {
+router.get('/api/voting-stats', async (req,res)=>{
   try {
-    const { postId } = context;
-    if (!postId) return res.json({ totalVotes: 0, activeVoters: 0, totalProposals: 0 });
-    
-    const proposalsStr = await redis.get(`proposals:${postId}`);
+    const { postId } = context; if(!postId) return res.json({ totalVotes:0, activeVoters:0, totalProposals:0 });
+    const weekParam = req.query.week ? parseInt(String(req.query.week)) : undefined;
+    const currentWeek = await ensureCurrentWeek(); const targetWeek = weekParam || currentWeek;
+    const proposalsStr = await redis.get(WEEK_PROPOSALS_KEY(postId, targetWeek));
     const proposals = proposalsStr ? JSON.parse(proposalsStr) : [];
-    
     const totalProposals = proposals.length;
-    const totalVotes = proposals.reduce((sum: number, p: any) => sum + p.votes, 0);
-    
-    // Count unique voters
-    const allVoters = new Set();
-    proposals.forEach((p: any) => {
-      p.voters.forEach((v: string) => allVoters.add(v));
-    });
+    const totalVotes = proposals.reduce((sum:number,p:any)=>sum+p.votes,0);
+    const allVoters = new Set<string>(); proposals.forEach((p:any)=>p.voters.forEach((v:string)=>allVoters.add(v)));
     const activeVoters = allVoters.size;
-    
-    res.json({ totalVotes, activeVoters, totalProposals });
-  } catch(e: any) {
+    res.json({ totalVotes, activeVoters, totalProposals, week: targetWeek });
+  } catch(e:any){
     console.error('[devvit api/voting-stats] error', e?.message);
-    res.json({ totalVotes: 0, activeVoters: 0, totalProposals: 0 });
+    res.json({ totalVotes:0, activeVoters:0, totalProposals:0 });
   }
 });
 
@@ -580,6 +531,50 @@ router.get('/api/user', async (_req, res) => {
   } catch(e: any) {
     console.error('[devvit api/user] error', e?.message);
     res.json({ username: null, error: e?.message });
+  }
+});
+// --- Week rollover endpoint ---
+router.post('/api/rollover-week', async (_req,res)=>{
+  try {
+    const { postId } = context; if(!postId) return res.status(400).json({ error:'post not found' });
+    const currentWeek = await ensureCurrentWeek();
+    const { endMs } = getWeekBoundaries(currentWeek);
+    const now = Date.now();
+    if(now <= endMs) return res.json({ rolled:false, reason:'week not ended', currentWeek });
+    const proposalsStr = await redis.get(WEEK_PROPOSALS_KEY(postId, currentWeek));
+    const proposals = proposalsStr ? JSON.parse(proposalsStr) : [];
+    const paletteWinner = pickWinner(proposals.filter((p:any)=>p.type==='palette')) || null;
+    const themeWinner = pickWinner(proposals.filter((p:any)=>p.type==='theme')) || null;
+    const brushWinner = pickWinner(proposals.filter((p:any)=>p.type==='brushKit')) || null;
+    await redis.set(WEEK_WINNERS_KEY(postId, currentWeek), JSON.stringify({ palette: paletteWinner, theme: themeWinner, brushKit: brushWinner }));
+    const newWeek = currentWeek + 1;
+    await redis.set(CURRENT_WEEK_KEY, newWeek.toString());
+    await redis.set(WEEK_PROPOSALS_KEY(postId, newWeek), JSON.stringify([]));
+    res.json({ rolled:true, newWeek });
+  } catch(e:any){
+    console.error('[devvit api/rollover-week] error', e?.message);
+    res.status(500).json({ error:'rollover failed', message:e?.message });
+  }
+});
+// Week info endpoint
+router.get('/api/week', async (_req,res)=>{
+  try {
+    const { postId } = context;
+    const currentWeek = await ensureCurrentWeek();
+    const { startMs, endMs } = getWeekBoundaries(currentWeek);
+    const now = Date.now();
+    const secondsUntilEnd = Math.max(0, Math.floor((endMs - now)/1000));
+    let winners: any = null;
+    if (postId) {
+      const wStr = await redis.get(WEEK_WINNERS_KEY(postId, currentWeek - 1));
+      if (wStr) {
+        try { winners = JSON.parse(wStr); } catch {}
+      }
+    }
+    res.json({ week: currentWeek, startMs, endMs, secondsUntilEnd, previousWinners: winners });
+  } catch(e:any){
+    console.error('[devvit api/week] error', e?.message);
+    res.status(500).json({ error:'week info failed', message:e?.message });
   }
 });
 // Use router middleware

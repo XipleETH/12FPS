@@ -30,13 +30,16 @@ export const PaletteVoting: React.FC<PaletteVotingProps> = () => {
   const [currentUser, setCurrentUser] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [currentWeek, setCurrentWeek] = useState<number>(1);
+
+  useEffect(()=>{ let cancel=false; (async()=>{ try { const r= await fetch('/api/week'); if(r.ok){ const j= await r.json(); if(!cancel) setCurrentWeek(j.week); } } catch{} })(); return ()=>{cancel=true}; },[]);
 
   // Load data from Reddit/Devvit endpoints
   const loadData = useCallback(async () => {
     try {
       const [proposalsRes, statsRes, userRes] = await Promise.all([
-        fetch('/api/proposals'),
-        fetch('/api/voting-stats'),
+        fetch(`/api/proposals?week=${currentWeek}`),
+        fetch(`/api/voting-stats?week=${currentWeek}`),
         fetch('/api/user')
       ]);
       
@@ -59,12 +62,12 @@ export const PaletteVoting: React.FC<PaletteVotingProps> = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [currentWeek]);
 
   // Load data on mount
   useEffect(() => {
     loadData();
-  }, [loadData]);
+  }, [loadData, currentWeek]);
 
   // Hash routing for subpages
   useEffect(() => {
