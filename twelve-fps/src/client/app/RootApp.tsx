@@ -20,6 +20,7 @@ const RootApp: React.FC = () => {
   const [brushSize, setBrushSize] = useState(10);
   const [isDrawing, setIsDrawing] = useState(false);
   const [frames, setFrames] = useState<Frame[]>([]);
+  const [initialVotes, setInitialVotes] = useState<Record<string, { up:number; down:number; my:-1|0|1 }>>({});
   const [currentView, setCurrentView] = useState<'draw' | 'gallery' | 'video' | 'voting' | 'chat'>('draw');
   const [timeLeft, setTimeLeft] = useState(7200);
   const [isSessionActive, setIsSessionActive] = useState(false);
@@ -40,6 +41,38 @@ const RootApp: React.FC = () => {
   const currentPreset: BrushPreset | undefined = brushKits[brushStyle]?.find(b=>b.id===brushPresetId);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [undoStack, setUndoStack] = useState<ImageData[]>([]);
+  // Load frames from Devvit server (if available)
+  useEffect(()=>{
+    let alive = true;
+    const load = async ()=>{
+      try {
+        const r = await fetch('/api/list-frames');
+        if(!r.ok) return;
+        const j = await r.json();
+        const arr: any[] = j.frames || [];
+        const mapped: Frame[] = arr.map((f:any)=>({
+          id: f.key || f.id,
+          imageData: f.url || f.imageData,
+          timestamp: f.lastModified || f.timestamp,
+          artist: f.artist || 'anonymous',
+          paletteWeek: f.week ?? f.paletteWeek ?? 0,
+        })).filter((f:Frame)=>!!f.id && !!f.imageData);
+        const votes: Record<string, { up:number; down:number; my:-1|0|1 }> = {};
+        for(const f of arr){
+          const k = f.key || f.id; if(!k) continue;
+          if (typeof f.votesUp === 'number' || typeof f.votesDown === 'number' || typeof f.myVote === 'number') {
+            votes[k] = { up: f.votesUp||0, down: f.votesDown||0, my: (f.myVote ?? 0) as (-1|0|1) };
+          }
+        }
+        if(!alive) return;
+        setFrames(mapped);
+        if(Object.keys(votes).length) setInitialVotes(votes);
+      } catch {}
+    };
+    load();
+    const t = window.setInterval(load, 15000);
+    return ()=>{ alive = false; window.clearInterval(t); };
+  },[]);
   useEffect(()=>{ let id:number; if(isSessionActive && timeLeft>0){ id=window.setInterval(()=>{ setTimeLeft(p=>{ if(p<=1){ setIsSessionActive(false); return 0;} return p-1;}); },1000);} return ()=>window.clearInterval(id);},[isSessionActive,timeLeft]);
   const startSession=()=>{ setIsSessionActive(true); setTimeLeft(7200); };
   const uploadCanvasPNG = useCallback(async ():Promise<{url:string; key?:string}|null>=>{ if(!canvasRef.current) return null; const canvas=canvasRef.current; const blob:Blob = await new Promise(res=>canvas.toBlob(b=>res(b as Blob),'image/png')); if(isEmbedded){ const dataUrl=canvas.toDataURL('image/png'); return { url: dataUrl }; } try{ const resp=await fetch('/api/upload-url',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({contentType:'image/png', ext:'png', prefix:'frames'})}); if(!resp.ok) throw new Error('no signed'); const { signedUrl, publicUrl, key } = await resp.json(); const put=await fetch(signedUrl,{ method:'PUT', headers:{'Content-Type':'image/png'}, body: blob}); if(!put.ok) throw new Error('upload fail'); return { url: publicUrl || signedUrl.split('?')[0], key }; }catch{ const dataUrl=canvas.toDataURL('image/png'); return { url: dataUrl }; } },[isEmbedded]);
@@ -97,7 +130,7 @@ const RootApp: React.FC = () => {
             </div>
           </div>
         )}
-        {currentView==='gallery' && <FrameGallery frames={frames} />}
+  {currentView==='gallery' && <FrameGallery frames={frames} initialVotes={initialVotes} />}
         {currentView==='video' && <VideoPlayer frames={frames} />}
         {currentView==='voting' && <PaletteVoting />}
         {currentView==='chat' && (

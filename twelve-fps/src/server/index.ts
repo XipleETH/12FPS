@@ -303,16 +303,34 @@ router.get('/r2/frames', async (_req, res) => {
     const frameKeys: string[] = frameKeysStr ? JSON.parse(frameKeysStr) : [];
     
     // Get all frame data
-    const frames = [];
+    const frames: any[] = [];
     for (const key of frameKeys) {
       const frameDataStr = await redis.get(`frames:data:${postId}:${key}`);
       if (frameDataStr) {
         const frameData = JSON.parse(frameDataStr);
+        // Skip flagged/deleted frames from public list
+        if (frameData.status && frameData.status !== 'active') continue;
+        // votes
+        const vraw = await redis.get(`frame:votes:${postId}:${key}`);
+        let votesUp = 0, votesDown = 0; let myVote: -1|0|1 = 0;
+        if (vraw) {
+          try { const v = JSON.parse(vraw); votesUp = v.up||0; votesDown = v.down||0; } catch{}
+        }
+        try {
+          const me = await reddit.getCurrentUsername();
+          if (me && vraw) { const v = JSON.parse(vraw); const by = v.by||{}; myVote = by[me] ?? 0; }
+        } catch {}
+        // compute week from timestamp
+        const week = getWeekNumber(frameData.timestamp);
         frames.push({
           key: frameData.key,
           url: frameData.dataUrl, // return data URL directly
           lastModified: frameData.timestamp,
-          artist: frameData.artist || 'anonymous'
+          artist: frameData.artist || 'anonymous',
+          week,
+          votesUp,
+          votesDown,
+          myVote
         });
       }
     }
@@ -410,16 +428,31 @@ router.get('/api/list-frames', async (_req, res) => {
     const frameKeys: string[] = frameKeysStr ? JSON.parse(frameKeysStr) : [];
     
     // Get all frame data
-    const frames = [];
+    const frames: any[] = [];
     for (const key of frameKeys) {
       const frameDataStr = await redis.get(`frames:data:${postId}:${key}`);
       if (frameDataStr) {
         const frameData = JSON.parse(frameDataStr);
+        if (frameData.status && frameData.status !== 'active') continue;
+        const vraw = await redis.get(`frame:votes:${postId}:${key}`);
+        let votesUp = 0, votesDown = 0; let myVote: -1|0|1 = 0;
+        if (vraw) {
+          try { const v = JSON.parse(vraw); votesUp = v.up||0; votesDown = v.down||0; } catch{}
+        }
+        try {
+          const me = await reddit.getCurrentUsername();
+          if (me && vraw) { const v = JSON.parse(vraw); const by = v.by||{}; myVote = by[me] ?? 0; }
+        } catch {}
+        const week = getWeekNumber(frameData.timestamp);
         frames.push({
           key: frameData.key,
-          url: frameData.dataUrl, // return data URL directly
+          url: frameData.dataUrl,
           lastModified: frameData.timestamp,
-          artist: frameData.artist || 'anonymous'
+          artist: frameData.artist || 'anonymous',
+          week,
+          votesUp,
+          votesDown,
+          myVote
         });
       }
     }
@@ -449,6 +482,233 @@ router.get('/api/proposals', async (req, res) => {
     console.error('[devvit api/proposals] error', e?.message);
     res.json({ proposals: [] });
   }
+});
+
+// --- Frame Voting & Moderation System ---
+
+type VoteDir = -1 | 0 | 1;
+function VOTES_KEY(postId: string, frameKey: string){ return `frame:votes:${postId}:${frameKey}`; }
+function MOD_QUEUE_KEY(postId: string){ return `frames:modqueue:${postId}`; }
+function MODS_SET_KEY(postId: string){ return `mods:allow:${postId}`; }
+
+async function getVotes(postId: string, frameKey: string){
+  const raw = await redis.get(VOTES_KEY(postId, frameKey));
+  if (!raw) return { by: {} as Record<string, VoteDir>, up: 0, down: 0 };
+  try { const v = JSON.parse(raw); return { by: v.by||{}, up: v.up||0, down: v.down||0 }; } catch { return { by: {}, up: 0, down: 0 }; }
+}
+
+async function setVotes(postId: string, frameKey: string, v: { by: Record<string, VoteDir>, up: number, down: number }){
+  await redis.set(VOTES_KEY(postId, frameKey), JSON.stringify(v));
+}
+
+async function isModUser(username: string | null | undefined, postId: string | null | undefined){
+  if (!username || !postId) return false;
+  try {
+    const raw = await redis.get(MODS_SET_KEY(postId));
+    const list: string[] = raw ? JSON.parse(raw) : [];
+    return list.includes(username);
+  } catch { return false; }
+}
+
+// Self-check: am I mod?
+router.get('/api/mod/me', async (_req, res) => {
+  try {
+    const u = await reddit.getCurrentUsername();
+    const ok = await isModUser(u, context.postId);
+    res.json({ isMod: !!ok, username: u || null });
+  } catch { res.json({ isMod: false, username: null }); }
+});
+
+// Allowlist management (simple): add/remove moderator usernames
+router.post('/api/mods', async (req, res) => {
+  try {
+    const { postId } = context; if (!postId) return res.status(400).json({ error: 'post not found' });
+    const me = await reddit.getCurrentUsername();
+    // Only existing mods can modify allowlist
+    const allowed = await isModUser(me, postId);
+    if (!allowed) return res.status(403).json({ error: 'forbidden' });
+    const { username } = req.body || {};
+    if (typeof username !== 'string' || !username.trim()) return res.status(400).json({ error: 'username required' });
+    const raw = await redis.get(MODS_SET_KEY(postId));
+    const list: string[] = raw ? JSON.parse(raw) : [];
+    if (!list.includes(username)) list.push(username);
+    await redis.set(MODS_SET_KEY(postId), JSON.stringify(list));
+    res.json({ ok: true, mods: list });
+  } catch(e:any){ res.status(500).json({ error: 'mod add failed', message: e?.message }); }
+});
+
+router.delete('/api/mods/:username', async (req, res) => {
+  try {
+    const { postId } = context; if (!postId) return res.status(400).json({ error: 'post not found' });
+    const me = await reddit.getCurrentUsername();
+    const allowed = await isModUser(me, postId);
+    if (!allowed) return res.status(403).json({ error: 'forbidden' });
+    const user = req.params.username;
+    const raw = await redis.get(MODS_SET_KEY(postId));
+    let list: string[] = raw ? JSON.parse(raw) : [];
+    list = list.filter((u)=>u!==user);
+    await redis.set(MODS_SET_KEY(postId), JSON.stringify(list));
+    res.json({ ok: true, mods: list });
+  } catch(e:any){ res.status(500).json({ error: 'mod remove failed', message: e?.message }); }
+});
+
+// Cast a vote on a frame (path param)
+router.post('/api/frames/:key/vote', async (req, res) => {
+  try {
+  const { postId } = context; let frameKey = req.params.key as string;
+  if (frameKey && frameKey.includes('%')) { try { frameKey = decodeURIComponent(frameKey); } catch {} }
+    if (!postId) return res.status(400).json({ error: 'post not found' });
+    const me = await reddit.getCurrentUsername(); if (!me) return res.status(401).json({ error: 'auth required' });
+    let dir: VoteDir = req.body?.dir; if (dir !== 1 && dir !== -1 && dir !== 0) return res.status(400).json({ error: 'invalid dir' });
+    // Load frame
+    const fraw = await redis.get(`frames:data:${postId}:${frameKey}`);
+    if (!fraw) return res.status(404).json({ error: 'frame not found' });
+    const frameData = JSON.parse(fraw);
+    if (frameData.status && frameData.status !== 'active') return res.status(400).json({ error: 'frame not active' });
+    // Votes
+    const v = await getVotes(postId, frameKey);
+    const prev: VoteDir = (v.by[me] ?? 0) as VoteDir;
+    let next: VoteDir = dir;
+    if (prev === dir) next = 0; // toggle off if same click
+    v.by[me] = next;
+    // recompute counts without scanning whole map by adjusting deltas
+    const prevUp = prev === 1 ? 1 : 0; const prevDown = prev === -1 ? 1 : 0;
+    const nextUp = next === 1 ? 1 : 0; const nextDown = next === -1 ? 1 : 0;
+    v.up = Math.max(0, (v.up || 0) - prevUp + nextUp);
+    v.down = Math.max(0, (v.down || 0) - prevDown + nextDown);
+    await setVotes(postId, frameKey, v);
+    // Threshold: 5 negative votes => flag to moderation queue
+    let flagged = false;
+    if ((v.down || 0) >= 5) {
+      // move from public list to mod queue if not already flagged
+      if (!frameData.status || frameData.status === 'active') {
+        frameData.status = 'flagged'; frameData.flaggedAt = Date.now();
+        await redis.set(`frames:data:${postId}:${frameKey}`, JSON.stringify(frameData));
+        // Remove from public list
+        const listRaw = await redis.get(`frames:list:${postId}`);
+        let list: string[] = listRaw ? JSON.parse(listRaw) : [];
+        list = list.filter(k => k !== frameKey);
+        await redis.set(`frames:list:${postId}`, JSON.stringify(list));
+        // Push to mod queue
+        const mqRaw = await redis.get(MOD_QUEUE_KEY(postId));
+        const mq: string[] = mqRaw ? JSON.parse(mqRaw) : [];
+        if (!mq.includes(frameKey)) mq.push(frameKey);
+        await redis.set(MOD_QUEUE_KEY(postId), JSON.stringify(mq));
+        flagged = true;
+      }
+    }
+    res.json({ ok: true, votesUp: v.up, votesDown: v.down, myVote: next, status: flagged ? 'flagged' : 'active' });
+  } catch(e:any){
+    console.error('[devvit api/frames/vote] error', e?.message);
+    res.status(500).json({ error: 'vote failed', message: e?.message });
+  }
+});
+
+
+// Cast a vote with JSON body key (fallback)
+router.post('/api/frame-vote', async (req,res)=>{
+  try {
+    const { postId } = context; if (!postId) return res.status(400).json({ error: 'post not found' });
+    const me = await reddit.getCurrentUsername(); if (!me) return res.status(401).json({ error: 'auth required' });
+    let { key, dir } = req.body || {};
+    if (typeof key !== 'string' || !key) return res.status(400).json({ error: 'key required' });
+    if (key.includes('%')) { try { key = decodeURIComponent(key); } catch {} }
+    if (dir !== 1 && dir !== -1 && dir !== 0) return res.status(400).json({ error: 'invalid dir' });
+    const fraw = await redis.get(`frames:data:${postId}:${key}`);
+    if (!fraw) return res.status(404).json({ error: 'frame not found' });
+    const frameData = JSON.parse(fraw);
+    if (frameData.status && frameData.status !== 'active') return res.status(400).json({ error: 'frame not active' });
+    const v = await getVotes(postId, key);
+    const prev: VoteDir = (v.by[me] ?? 0) as VoteDir;
+    let next: VoteDir = dir;
+    if (prev === dir) next = 0;
+    v.by[me] = next;
+    const prevUp = prev === 1 ? 1 : 0; const prevDown = prev === -1 ? 1 : 0;
+    const nextUp = next === 1 ? 1 : 0; const nextDown = next === -1 ? 1 : 0;
+    v.up = Math.max(0, (v.up || 0) - prevUp + nextUp);
+    v.down = Math.max(0, (v.down || 0) - prevDown + nextDown);
+    await setVotes(postId, key, v);
+    let flagged = false;
+    if ((v.down || 0) >= 5) {
+      if (!frameData.status || frameData.status === 'active') {
+        frameData.status = 'flagged'; frameData.flaggedAt = Date.now();
+        await redis.set(`frames:data:${postId}:${key}`, JSON.stringify(frameData));
+        const listRaw = await redis.get(`frames:list:${postId}`);
+        let list: string[] = listRaw ? JSON.parse(listRaw) : [];
+        list = list.filter(k => k !== key);
+        await redis.set(`frames:list:${postId}`, JSON.stringify(list));
+        const mqRaw = await redis.get(MOD_QUEUE_KEY(postId));
+        const mq: string[] = mqRaw ? JSON.parse(mqRaw) : [];
+        if (!mq.includes(key)) mq.push(key);
+        await redis.set(MOD_QUEUE_KEY(postId), JSON.stringify(mq));
+        flagged = true;
+      }
+    }
+    res.json({ ok: true, votesUp: v.up, votesDown: v.down, myVote: next, status: flagged ? 'flagged' : 'active' });
+  } catch(e:any){
+    console.error('[devvit api/frame-vote] error', e?.message);
+    res.status(500).json({ error: 'vote failed', message: e?.message });
+  }
+});
+
+// List flagged frames for moderation queue
+router.get('/api/mod/frames', async (_req, res) => {
+  try {
+    const { postId } = context; if (!postId) return res.json({ frames: [] });
+    const me = await reddit.getCurrentUsername(); const allowed = await isModUser(me, postId);
+    if (!allowed) return res.status(403).json({ error: 'forbidden' });
+    const mqRaw = await redis.get(MOD_QUEUE_KEY(postId));
+    const keys: string[] = mqRaw ? JSON.parse(mqRaw) : [];
+    const out: any[] = [];
+    for (const key of keys) {
+      const fraw = await redis.get(`frames:data:${postId}:${key}`);
+      if (!fraw) continue;
+      const fd = JSON.parse(fraw);
+      const vraw = await redis.get(VOTES_KEY(postId, key));
+      let votesUp = 0, votesDown = 0;
+      if (vraw) { try { const v = JSON.parse(vraw); votesUp = v.up||0; votesDown = v.down||0; } catch{} }
+      out.push({ key, url: fd.dataUrl, lastModified: fd.timestamp, artist: fd.artist, votesUp, votesDown, flaggedAt: fd.flaggedAt||null });
+    }
+    res.json({ frames: out });
+  } catch(e:any){ res.status(500).json({ error: 'mod list failed', message: e?.message }); }
+});
+
+// Restore a flagged frame to gallery
+router.post('/api/mod/frames/:key/restore', async (req, res) => {
+  try {
+    const { postId } = context; const key = req.params.key; if (!postId) return res.status(400).json({ error: 'post not found' });
+    const me = await reddit.getCurrentUsername(); const allowed = await isModUser(me, postId);
+    if (!allowed) return res.status(403).json({ error: 'forbidden' });
+    const fraw = await redis.get(`frames:data:${postId}:${key}`); if (!fraw) return res.status(404).json({ error: 'frame not found' });
+    const fd = JSON.parse(fraw); fd.status = 'active'; delete fd.flaggedAt; await redis.set(`frames:data:${postId}:${key}`, JSON.stringify(fd));
+    // Add back to public list (append at end)
+    const listRaw = await redis.get(`frames:list:${postId}`); const list: string[] = listRaw ? JSON.parse(listRaw) : [];
+    if (!list.includes(key)) { list.push(key); await redis.set(`frames:list:${postId}`, JSON.stringify(list)); }
+    // Remove from mod queue
+    const mqRaw = await redis.get(MOD_QUEUE_KEY(postId)); let mq: string[] = mqRaw ? JSON.parse(mqRaw) : [];
+    mq = mq.filter(k => k !== key); await redis.set(MOD_QUEUE_KEY(postId), JSON.stringify(mq));
+    res.json({ ok: true });
+  } catch(e:any){ res.status(500).json({ error: 'restore failed', message: e?.message }); }
+});
+
+// Permanently delete a flagged frame
+router.delete('/api/mod/frames/:key', async (req, res) => {
+  try {
+    const { postId } = context; const key = req.params.key; if (!postId) return res.status(400).json({ error: 'post not found' });
+    const me = await reddit.getCurrentUsername(); const allowed = await isModUser(me, postId);
+    if (!allowed) return res.status(403).json({ error: 'forbidden' });
+    // Remove data
+    await redis.set(`frames:data:${postId}:${key}`, '');
+    // Ensure removed from public list
+    const listRaw = await redis.get(`frames:list:${postId}`); let list: string[] = listRaw ? JSON.parse(listRaw) : [];
+    list = list.filter(k => k !== key); await redis.set(`frames:list:${postId}`, JSON.stringify(list));
+    // Remove from mod queue
+    const mqRaw = await redis.get(MOD_QUEUE_KEY(postId)); let mq: string[] = mqRaw ? JSON.parse(mqRaw) : [];
+    mq = mq.filter(k => k !== key); await redis.set(MOD_QUEUE_KEY(postId), JSON.stringify(mq));
+    // Clear votes
+    await redis.set(VOTES_KEY(postId, key), '');
+    res.json({ ok: true });
+  } catch(e:any){ res.status(500).json({ error: 'delete failed', message: e?.message }); }
 });
 
 // Submit a new proposal

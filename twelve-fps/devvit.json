@@ -1,6 +1,6 @@
 {
   "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
-  "name": "twelvefps",
+  "name": "docefps",
   "post": {
     "dir": "dist/client",
     "entrypoints": {
@@ -29,6 +29,6 @@
     "onAppInstall": "/internal/on-app-install"
   },
   "dev": {
-    "subreddit": "twelvefps_dev"
+    "subreddit": "docefps_dev"
   }
 }

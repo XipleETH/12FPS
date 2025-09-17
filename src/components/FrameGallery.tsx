@@ -1,14 +1,16 @@
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import { Frame } from '../App';
-import { User, Calendar } from 'lucide-react';
+import { User, Calendar, ArrowBigUp, ArrowBigDown } from 'lucide-react';
 
 interface FrameGalleryProps {
   frames: Frame[];
   pendingFrame?: { imageData: string; startedAt: number } | null;
+  initialVotes?: Record<string, { up: number; down: number; my: -1|0|1 }>;
 }
 
-export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame }) => {
+export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame, initialVotes }) => {
   const [openWeeks, setOpenWeeks] = useState<Record<number, boolean>>({});
+  const [votes, setVotes] = useState<Record<string, { up: number; down: number; my: -1|0|1 }>>({});
   const toggleWeek = useCallback((week:number)=>{
     setOpenWeeks(o=>({...o,[week]:!o[week]}));
   },[]);
@@ -20,6 +22,40 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
       minute: '2-digit'
     });
   };
+
+  // Initialize votes from prop or fetch once for richer data
+  useEffect(()=>{
+    if (initialVotes) {
+      setVotes({ ...initialVotes });
+      return;
+    }
+    // Best-effort fetch to seed votes for existing frames
+    (async ()=>{
+      try {
+        const r = await fetch('/api/list-frames');
+        if (!r.ok) return;
+        const j = await r.json();
+        const acc: Record<string, { up:number; down:number; my:-1|0|1 }> = {};
+        for (const f of (j.frames||[])) {
+          const k = f.key || f.id; if (!k) continue;
+          if (typeof f.votesUp === 'number' || typeof f.votesDown === 'number' || typeof f.myVote === 'number') {
+            acc[k] = { up: f.votesUp||0, down: f.votesDown||0, my: (f.myVote ?? 0) as (-1|0|1) };
+          }
+        }
+        if (Object.keys(acc).length) setVotes(acc);
+      } catch {}
+    })();
+  }, [initialVotes]);
+
+  const vote = useCallback(async (key:string, dir: -1|0|1)=>{
+    try {
+      const res = await fetch(`/api/frame-vote`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, dir }) });
+      if (!res.ok) return;
+      const j = await res.json();
+      // If server flagged it, optimistically drop its votes (it will disappear on next poll in App)
+      setVotes(v => ({ ...v, [key]: { up: j.votesUp ?? 0, down: j.votesDown ?? 0, my: (j.myVote ?? 0) as (-1|0|1) } }));
+    } catch {}
+  }, []);
 
   // Dedupe: if pending frame image matches the last published frame image, suppress it
   let showPending = false;
@@ -121,9 +157,10 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
                 <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-6 gap-3 pt-1">
                   {[...sorted].reverse().map((frame)=>{
                     const index = frames.indexOf(frame); // global index
+                    const key = (frame as any).key || frame.id;
                     return (
                       <div
-                        key={frame.id}
+                        key={key}
                         className="bg-white/10 backdrop-blur-sm rounded-xl overflow-hidden border border-white/10 hover:bg-white/20 transition-colors duration-200"
                       >
                         <div className="relative aspect-[540/740] bg-black/40 flex items-center justify-center">
@@ -142,6 +179,17 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
                             <Calendar className="w-3 h-3" />
                             <span>{formatDate(frame.timestamp)}</span>
                           </div>
+                          {key && (
+                            <div className="mt-1 flex items-center justify-end gap-2">
+                              <button aria-label="Upvote" onClick={()=>vote(key, votes[key]?.my===1 ? 0 : 1)} className={`p-0.5 rounded ${votes[key]?.my===1? 'text-green-400':'text-white/50'} hover:text-green-300`}>
+                                <ArrowBigUp className="w-4 h-4" />
+                              </button>
+                              <span className="text-[9px] text-white/60">{(votes[key]?.up ?? 0) - (votes[key]?.down ?? 0)}</span>
+                              <button aria-label="Downvote" onClick={()=>vote(key, votes[key]?.my===-1 ? 0 : -1)} className={`p-0.5 rounded ${votes[key]?.my===-1? 'text-red-400':'text-white/50'} hover:text-red-300`}>
+                                <ArrowBigDown className="w-4 h-4" />
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
