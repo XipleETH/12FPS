@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Canvas } from './components/Canvas';
+import { allBrushPresets, BrushPreset } from './brushes';
 // import { ColorPalette } from './components/ColorPalette';
 import { SidePanels, PanelKey } from './components/SidePanels';
 import { Header } from './components/Header';
@@ -7,7 +8,15 @@ import { FrameGallery } from './components/FrameGallery';
 import { VideoPlayer } from './components/VideoPlayer';
 import { PaletteVoting } from './components/PaletteVoting';
 // Header removed: navigation moved into SidePanels
-import { ZoomIn, ZoomOut, Layers } from 'lucide-react';
+import { ZoomIn, ZoomOut } from 'lucide-react';
+
+// Simple onion icon (layered rings) replacing Layers icon
+const OnionIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M12 3c0 3-2 4-3.5 6C6.8 11 6 12.5 6 15a6 6 0 0 0 12 0c0-2.5-.8-4-2.5-6C14 7 12 6 12 3Z" />
+    <path d="M9.5 13c0 2 1.2 3.5 2.5 3.5s2.5-1.5 2.5-3.5" />
+  </svg>
+);
 // Brush presets removed; no brush imports needed
 
 export interface Frame {
@@ -45,6 +54,7 @@ function App() {
 
   const [activeColor, setActiveColor] = useState('#FF6B6B');
   const [brushSize, setBrushSize] = useState(10);
+  const [brushPresetId, setBrushPresetId] = useState<string>('manga-ink-fine'); // TODO: hook up to brush panel selection
   const [isDrawing, setIsDrawing] = useState(false);
   const [frames, setFrames] = useState<Frame[]>([]);
   // Frame temporal (solo cache local durante la sesión)
@@ -63,11 +73,38 @@ function App() {
   const [tool, setTool] = useState<'draw' | 'erase' | 'fill'>('draw');
   const [zoom, setZoom] = useState(1);
   const [onionOpacity, setOnionOpacity] = useState(0.35);
+  // Poll finalized frames periodically to keep spectators in sync (artist already refreshes on finalize)
+  useEffect(() => {
+    const interval = window.setInterval(async () => {
+      try {
+        const resp = await fetch('/api/list-frames');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (Array.isArray(data.frames)) {
+          const loaded: Frame[] = data.frames.map((o: any) => ({
+            id: o.key || o.id || Math.random().toString(36).slice(2),
+            key: o.key,
+            imageData: o.url,
+            timestamp: o.lastModified || Date.now(),
+            artist: o.artist || 'anonymous',
+            paletteWeek: currentWeek
+          }));
+          const byKey = new Map<string, Frame>();
+          for (const f of loaded) {
+            if (!f.key) continue; const prev = byKey.get(f.key); if (!prev || f.timestamp > prev.timestamp) byKey.set(f.key, f);
+          }
+          const sorted = Array.from(byKey.values()).sort((a,b)=>a.timestamp - b.timestamp);
+          setFrames(sorted);
+        }
+      } catch {}
+    }, 20000);
+    return () => window.clearInterval(interval);
+  }, [currentWeek]);
   const canvasCardRef = useRef<HTMLDivElement | null>(null);
   // Turn-based state
   const [currentUser, setCurrentUser] = useState<string>('anonymous');
   const [turnInfo, setTurnInfo] = useState<any>(null);
-  const [lobbyActionLoading, setLobbyActionLoading] = useState(false);
+  // lobbyActionLoading removed (buttons moved into side panel)
   // Artist readiness removed; first click claims turn
   // debugMode removed (fast forward no longer used)
 
@@ -84,6 +121,7 @@ function App() {
   // No currentPreset while brushes are disabled
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const currentBrushPreset: BrushPreset | undefined = allBrushPresets.find(p=>p.id===brushPresetId);
   const [undoStack, setUndoStack] = useState<ImageData[]>([]);
   const [draftImage, setDraftImage] = useState<string | null>(null);
 
@@ -236,6 +274,21 @@ function App() {
   // Clear local pending caches
   setPendingFrameDataUrl(null);
   setSharedPending(null);
+        // Clear draft (local) after finalize so next artist starts clean
+        try { localStorage.removeItem(DRAFT_KEY); } catch {}
+        setDraftImage(null);
+        // Proactively clear canvas for local view
+        if (canvasRef.current) {
+          const ctx = canvasRef.current.getContext('2d');
+          if (ctx) {
+            ctx.save();
+            ctx.setTransform(1,0,0,1,0,0);
+            ctx.clearRect(0,0,canvasRef.current.width, canvasRef.current.height);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0,0,canvasRef.current.width, canvasRef.current.height);
+            ctx.restore();
+          }
+        }
         // Reload frames list to include newly finalized frame
         const lf = await fetch('/api/list-frames');
         if (lf.ok) {
@@ -249,7 +302,14 @@ function App() {
               artist: o.artist || 'anonymous',
               paletteWeek: currentWeek
             }));
-            setFrames(loaded);
+            const byKey = new Map<string, Frame>();
+            for (const f of loaded) {
+              if (!f.key) continue;
+              const prev = byKey.get(f.key);
+              if (!prev || f.timestamp > prev.timestamp) byKey.set(f.key, f);
+            }
+            const sorted = Array.from(byKey.values()).sort((a,b)=>a.timestamp - b.timestamp);
+            setFrames(sorted);
           }
         }
       } catch {}
@@ -267,11 +327,12 @@ function App() {
           if (!r.ok) return;
           const j = await r.json();
           if (j && j.pending && j.pending.url) {
-            const cacheBuster = j.pending.etag || j.pending.lastModified || Date.now();
-            const bustedUrl = j.pending.url + (j.pending.url.includes('?') ? '&' : '?') + 'v=' + cacheBuster;
+            const rawUrl: string = j.pending.url;
+            const isData = rawUrl.startsWith('data:image/png');
+            const effectiveUrl = isData ? rawUrl : (rawUrl + (rawUrl.includes('?') ? '&' : '?') + 'v=' + (j.pending.etag || j.pending.lastModified || Date.now()));
             setSharedPending(prev => {
-              if (prev && prev.etag === j.pending.etag) return prev; // unchanged
-              return { imageData: bustedUrl, timestamp: j.pending.lastModified || Date.now(), etag: j.pending.etag };
+              if (prev && prev.imageData === effectiveUrl) return prev; // unchanged
+              return { imageData: effectiveUrl, timestamp: j.pending.lastModified || Date.now(), etag: j.pending.etag };
             });
           } else {
             setSharedPending(null);
@@ -292,7 +353,27 @@ function App() {
       // Artist switched; ensure any pending frame is finalized via server finalize endpoint
       forceEndSession();
     }
-    prevArtistRef.current = turnInfo.currentArtist;
+    // Only react when artist actually changes (avoid flicker each poll)
+    if (prevArtistRef.current !== turnInfo.currentArtist) {
+      const previous = prevArtistRef.current;
+      prevArtistRef.current = turnInfo.currentArtist;
+      if (previous === currentUser && turnInfo.currentArtist !== currentUser) {
+        // We lost artist role: clear draft & canvas once
+        try { localStorage.removeItem(DRAFT_KEY); } catch {}
+        setDraftImage(null);
+        if (canvasRef.current) {
+          const ctx = canvasRef.current.getContext('2d');
+          if (ctx) {
+            ctx.save();
+            ctx.setTransform(1,0,0,1,0,0);
+            ctx.clearRect(0,0,canvasRef.current.width, canvasRef.current.height);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0,0,canvasRef.current.width, canvasRef.current.height);
+            ctx.restore();
+          }
+        }
+      }
+    }
   }, [turnInfo?.currentArtist, forceEndSession, currentUser]);
 
   useEffect(() => {
@@ -308,19 +389,28 @@ function App() {
   useEffect(() => {
     (async () => {
       try {
-    const resp = await fetch(prefixIfLocal('/api/list-frames'));
+    // In reddit embed rely on Devvit provided Redis list (same path). Outside embed still use the same path for consistency
+  const resp = await fetch('/api/list-frames');
         if (!resp.ok) return;
         const data = await resp.json();
         if (Array.isArray(data.frames)) {
           const loaded: Frame[] = data.frames.map((o: any) => ({
-            id: o.key || o.id || o.key || Math.random().toString(36).slice(2),
+            id: o.key || o.id || Math.random().toString(36).slice(2),
             key: o.key,
             imageData: o.url,
             timestamp: o.lastModified || Date.now(),
             artist: o.artist || 'anonymous',
             paletteWeek: currentWeek
           }));
-          setFrames(loaded);
+          // Dedupe by key keeping latest timestamp
+          const byKey = new Map<string, Frame>();
+          for (const f of loaded) {
+            if (!f.key) continue;
+            const prev = byKey.get(f.key);
+            if (!prev || f.timestamp > prev.timestamp) byKey.set(f.key, f);
+          }
+          const sorted = Array.from(byKey.values()).sort((a,b)=>a.timestamp - b.timestamp);
+          setFrames(sorted);
         }
       } catch (e) {
         // silent
@@ -367,11 +457,7 @@ function App() {
   return (
     <div className={`min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-violet-900 ${isEmbedded ? 'embedded-mode' : ''}`}>
       {/* Embedding indicator for Reddit */}
-      {isEmbedded && embedContext === 'reddit' && (
-        <div className="bg-orange-500/90 text-white text-xs px-3 py-1 text-center font-medium">
-          🎨 Running in Reddit • Full experience at 12-fps.vercel.app
-        </div>
-      )}
+  {/* Reddit banner removed */}
       
   <Header currentView={currentView} setCurrentView={setCurrentView} />
   <div className="max-w-6xl mx-auto px-3 pb-4">
@@ -381,12 +467,7 @@ function App() {
             <div><span className="font-semibold">User:</span> {currentUser}</div>
             <div><span className="font-semibold">Artist:</span> {turnInfo.currentArtist || '—'}</div>
             <div><span className="font-semibold">Ends in:</span> {new Date(timeLeft * 1000).toISOString().substring(11,19)}</div>
-            {!turnInfo.currentArtist && timeLeft > 0 && (
-              <button disabled={lobbyActionLoading} onClick={async ()=>{ setLobbyActionLoading(true); try { await fetch('/api/turn',{ method:'POST'}); const r= await fetch('/api/turn'); if(r.ok) setTurnInfo(await r.json()); } finally { setLobbyActionLoading(false);} }} className="px-3 py-1 bg-emerald-600/80 hover:bg-emerald-600 text-white rounded-md text-xs font-semibold shadow">Start Turn</button>
-            )}
-            {turnInfo.currentArtist === currentUser && (
-              <button onClick={forceEndSession} className="px-2 py-1 bg-red-600/70 hover:bg-red-600 text-white rounded text-xs">Finalize (debug)</button>
-            )}
+            {/* Start / Finalize buttons moved into Actions side panel */}
           </div>
         )}
         {currentView === 'draw' && (
@@ -400,6 +481,8 @@ function App() {
               setTool={setTool}
               brushSize={brushSize}
               setBrushSize={setBrushSize}
+                brushPresetId={brushPresetId}
+                setBrushPresetId={setBrushPresetId}
               colors={currentPalette}
               activeColor={activeColor}
               setActiveColor={setActiveColor}
@@ -409,8 +492,11 @@ function App() {
               onUndo={undo}
               disabled={!(turnInfo && turnInfo.currentArtist === currentUser) || timeLeft === 0}
               timeLeft={timeLeft}
-              lobbyToggleButton={null}
-              artistActionButton={null}
+              onStartTurn={async () => { try { await fetch('/api/turn',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'start', user: currentUser }) }); const r= await fetch('/api/turn'); if(r.ok) setTurnInfo(await r.json()); } catch {} }}
+              onFinalizeTurn={forceEndSession}
+              canStart={Boolean(turnInfo && !turnInfo.currentArtist && timeLeft > 0)}
+              isArtist={Boolean(turnInfo && turnInfo.currentArtist === currentUser)}
+              currentArtist={turnInfo?.currentArtist || null}
             />
             <div ref={canvasCardRef}>
               <div className="flex items-start gap-4">
@@ -432,13 +518,14 @@ function App() {
                         <ZoomOut className="w-4 h-4 text-white/70" />
                       </div>
                       <div className="flex flex-col items-center gap-1">
-                        <Layers className="w-4 h-4 text-white/70" />
+                        <OnionIcon className="w-4 h-4 text-white/70" />
                         <input
                           type="range"
                           min={0}
                           max={100}
                           value={Math.round(onionOpacity*100)}
-                          onChange={(e) => setOnionOpacity(parseInt(e.target.value,10)/100)}
+                          onChange={(e) => (turnInfo && turnInfo.currentArtist === currentUser) ? setOnionOpacity(parseInt(e.target.value,10)/100) : undefined}
+                          disabled={!(turnInfo && turnInfo.currentArtist === currentUser) || !frames.length}
                           aria-label="Onion opacity"
                           className="h-28 accent-white/70 cursor-pointer rotate-180"
                           style={{ writingMode: 'vertical-rl' as any }}
@@ -448,23 +535,25 @@ function App() {
                   </div>
                 )}
                 <div className="inline-block">
-                  <Canvas
-                    ref={canvasRef}
-                    activeColor={activeColor}
-                    brushSize={brushSize}
-                    isDrawing={isDrawing}
-                    setIsDrawing={setIsDrawing}
-                    disabled={!(turnInfo && turnInfo.currentArtist === currentUser) || timeLeft === 0}
-                    brushMode={'solid'}
-                    brushPreset={undefined}
-                    tool={tool}
-                    onBeforeMutate={snapshotCanvas}
-                    zoom={zoom}
-                    onionImage={frames.length ? frames[frames.length-1].imageData : undefined}
-                    onionOpacity={onionOpacity}
-                    onDirty={persistDraft}
-                    restoreImage={draftImage}
-                  />
+                    <Canvas
+                      key={`canvas-${turnInfo?.currentArtist || 'none'}-${frames.length ? frames[frames.length-1].key : 'empty'}`}
+                      ref={canvasRef}
+                      activeColor={activeColor}
+                      brushSize={brushSize}
+                      isDrawing={isDrawing}
+                      setIsDrawing={setIsDrawing}
+                      disabled={!(turnInfo && turnInfo.currentArtist === currentUser) || timeLeft === 0}
+                      brushPreset={currentBrushPreset}
+                      tool={tool}
+                      onBeforeMutate={snapshotCanvas}
+                      zoom={zoom}
+                      // Only show onion (previous frame) to the active artist as a faint guide
+                      onionImage={(turnInfo && turnInfo.currentArtist === currentUser && frames.length) ? frames[frames.length-1].imageData : undefined}
+                      onionOpacity={onionOpacity}
+                      onDirty={persistDraft}
+                      // Spectators see the last finalized frame fully; artist sees their draft (if any)
+                      restoreImage={(turnInfo && turnInfo.currentArtist === currentUser) ? draftImage : (frames.length ? frames[frames.length-1].imageData : null)}
+                    />
                 </div>
                 {paletteSide === 'left' && (
                   <div className="flex flex-col gap-2 pt-2">
@@ -484,13 +573,14 @@ function App() {
                         <ZoomOut className="w-4 h-4 text-white/70" />
                       </div>
                       <div className="flex flex-col items-center gap-1">
-                        <Layers className="w-4 h-4 text-white/70" />
+                        <OnionIcon className="w-4 h-4 text-white/70" />
                         <input
                           type="range"
                           min={0}
                           max={100}
                           value={Math.round(onionOpacity*100)}
-                          onChange={(e) => setOnionOpacity(parseInt(e.target.value,10)/100)}
+                          onChange={(e) => (turnInfo && turnInfo.currentArtist === currentUser) ? setOnionOpacity(parseInt(e.target.value,10)/100) : undefined}
+                          disabled={!(turnInfo && turnInfo.currentArtist === currentUser) || !frames.length}
                           aria-label="Onion opacity"
                           className="h-28 accent-white/70 cursor-pointer rotate-180"
                           style={{ writingMode: 'vertical-rl' as any }}

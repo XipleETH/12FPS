@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { Vote, TrendingUp, Users, Brush, Droplet, Wind, Sparkles, RefreshCw, Clock } from 'lucide-react';
+import { Vote, TrendingUp, Users, Brush, RefreshCw, Clock } from 'lucide-react';
 
 interface PaletteVotingProps {}
 
@@ -153,7 +153,8 @@ export const PaletteVoting: React.FC<PaletteVotingProps> = () => {
   const [newPaletteName, setNewPaletteName] = useState('');
   const [newPaletteColors, setNewPaletteColors] = useState<string[]>(['#FF6B6B','#4ECDC4','#45B7D1','#96CEB4','#FFEAA7','#DDA0DD']);
   const [newThemeTitle, setNewThemeTitle] = useState('');
-  const [newModes, setNewModes] = useState<('solid' | 'soft' | 'fade' | 'spray')[]>(['solid']);
+  // Solo un modo disponible actualmente: mangaPen
+  const [newModes, setNewModes] = useState<string[]>(['mangaPen']);
 
   const isHex = (s: string) => /^#([0-9a-fA-F]{6})$/.test(s);
   const canSubmitPalette = useMemo(() => 
@@ -163,7 +164,7 @@ export const PaletteVoting: React.FC<PaletteVotingProps> = () => {
     [newPaletteName, newPaletteColors]
   );
   const canSubmitTheme = useMemo(() => newThemeTitle.trim().length >= 3, [newThemeTitle]);
-  const canSubmitModes = useMemo(() => newModes.length >= 1 && newModes.length <= 4, [newModes]);
+  const canSubmitModes = useMemo(() => newModes.length === 1 && newModes[0] === 'mangaPen', [newModes]);
 
   // Submit handlers
   const handleSubmitPalette = async () => {
@@ -186,26 +187,17 @@ export const PaletteVoting: React.FC<PaletteVotingProps> = () => {
 
   const handleSubmitModes = async () => {
     if (!canSubmitModes) return;
-    const label = newModes.map(m => ({solid:'Solid',soft:'Soft',fade:'Fade',spray:'Spray'}[m])).join(' + ');
-    // normalize brush kit to { modes: Mode[] }
-    const success = await submitProposal('brushKit', label, { modes: newModes });
+    const label = 'Manga Ink Pen';
+    const success = await submitProposal('brushKit', label, { modes: ['mangaPen'] });
     if (success) {
-      setNewModes(['solid']);
+      setNewModes(['mangaPen']);
     }
   };
 
   // Mode badge component
-  type Mode = 'solid' | 'soft' | 'fade' | 'spray';
-  const ModeBadge: React.FC<{ m: Mode }> = ({ m }) => {
-    const map: Record<Mode, {icon: React.ReactNode; label: string}> = {
-      solid: { icon: <Brush className="w-3.5 h-3.5" />, label: 'Solid' },
-      soft: { icon: <Droplet className="w-3.5 h-3.5" />, label: 'Soft' },
-      fade: { icon: <Wind className="w-3.5 h-3.5" />, label: 'Fade' },
-      spray: { icon: <Sparkles className="w-3.5 h-3.5" />, label: 'Spray' }
-    };
-    const v = map[m];
-    return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/10 border border-white/20 text-white/80 text-[10px]">{v.icon}{v.label}</span>;
-  };
+  const ModeBadge: React.FC = () => (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/10 border border-white/20 text-white/80 text-[10px]"><Brush className="w-3.5 h-3.5" />Manga Pen</span>
+  );
 
   // Check if user has voted
   const hasUserVoted = (proposal: Proposal) => {
@@ -420,20 +412,10 @@ export const PaletteVoting: React.FC<PaletteVotingProps> = () => {
           <section className="bg-white/10 backdrop-blur-sm rounded-2xl p-5 md:p-6 border border-white/20">
             <h3 className="text-xl font-bold text-white mb-4">Propose brush kit</h3>
             <div className="flex flex-wrap items-center gap-3 mb-3">
-              {(['solid','soft','fade','spray'] as Mode[]).map(m => {
-                const checked = newModes.includes(m);
-                return (
-                  <label key={m} className={`flex items-center gap-2 px-2 py-1 rounded-lg border cursor-pointer ${checked ? 'bg-white/20 border-white/50 text-white':'bg-white/10 border-white/20 text-white/70 hover:bg-white/15'}`}>
-                    <input 
-                      type="checkbox" 
-                      className="accent-white" 
-                      checked={checked} 
-                      onChange={() => setNewModes(prev => checked ? prev.filter(x=>x!==m) : [...prev,m])} 
-                    />
-                    <ModeBadge m={m} />
-                  </label>
-                );
-              })}
+              <label className="flex items-center gap-2 px-2 py-1 rounded-lg border bg-white/20 border-white/50 text-white cursor-not-allowed">
+                <input type="checkbox" className="accent-white" checked readOnly />
+                <ModeBadge />
+              </label>
             </div>
             <button 
               disabled={!canSubmitModes || submitting} 
@@ -459,9 +441,7 @@ export const PaletteVoting: React.FC<PaletteVotingProps> = () => {
                       <div className="flex justify-between items-start mb-4">
                         <div>
                           <h4 className="text-lg font-bold text-white mb-1">{kit.title}</h4>
-                          <div className="flex items-center gap-1 flex-wrap mb-1">
-                            {(Array.isArray(kit.data) ? kit.data : (kit.data?.modes || [])).map((m: Mode) => <ModeBadge key={m} m={m} />)}
-                          </div>
+                          <div className="flex items-center gap-1 flex-wrap mb-1"><ModeBadge /></div>
                           <div className="flex items-center space-x-2 text-white/70 text-sm">
                             <Users className="w-3 h-3" />
                             <span>by u/{kit.proposedBy}</span>

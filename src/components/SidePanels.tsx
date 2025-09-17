@@ -1,5 +1,22 @@
 import React from 'react';
+import { allBrushPresets, BrushPreset } from '../brushes';
 import { ChevronLeft, ChevronRight, MoveUp, MoveDown, Save, Trash2, Undo2, Pencil, Eraser, PaintBucket, Clock } from 'lucide-react';
+
+// Minimal clapperboard icons (open/closed) tailored for start/finalize actions
+const ClapperOpen: React.FC<{ className?: string }> = ({ className }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M3 11h18v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9Z" />
+    <path d="m3 7 2.5 2M7 5l2.5 4M11 5l2.5 4M15 5l2.5 4M19 5l2 4" />
+    <path d="M3 7V5a1 1 0 0 1 1-1h3.2a1 1 0 0 1 .8.4L10 7" />
+  </svg>
+);
+const ClapperClosed: React.FC<{ className?: string }> = ({ className }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M3 10h18v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V10Z" />
+    <path d="M3 6h18v4H3z" />
+    <path d="m5 6 2.5 4M9 6l2.5 4M13 6l2.5 4M17 6l2 4" />
+  </svg>
+);
 
 export type PanelKey = 'actions' | 'tools' | 'brushSize' | 'brushMode' | 'palette';
 
@@ -26,10 +43,17 @@ interface SidePanelsProps {
   // session controls
   timeLeft?: number; // seconds until window end
   // Lobby
-  lobbyToggleButton?: React.ReactNode;
-  isArtist?: boolean; // whether local user is current artist
-  // Artist action (e.g., Start Drawing)
-  artistActionButton?: React.ReactNode;
+  // lobbyToggleButton removed
+  // Deprecated: lobby & external artist action button removed
+  // New turn control callbacks & state
+  onStartTurn?: () => void;
+  onFinalizeTurn?: () => void;
+  canStart?: boolean;
+  isArtist?: boolean;
+  currentArtist?: string | null;
+  // Brush preset control
+  brushPresetId?: string;
+  setBrushPresetId?: (id: string) => void;
 }
 
 const PanelWrapper: React.FC<{
@@ -79,8 +103,13 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
   onUndo,
   disabled,
   timeLeft,
-  lobbyToggleButton,
-  artistActionButton,
+  onStartTurn,
+  onFinalizeTurn,
+  canStart,
+  isArtist,
+  currentArtist,
+  brushPresetId,
+  setBrushPresetId,
 }) => {
   const move = (key: PanelKey, dir: -1 | 1) => {
     const idx = order.indexOf(key);
@@ -106,26 +135,54 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
     if (key === 'actions') {
       return (
         <PanelWrapper key={key} title="Actions" {...common}>
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-center gap-3">
-              <button onClick={() => !disabled && onSave()} disabled={disabled} aria-label="Save Frame" className="p-2.5 rounded-full bg-emerald-500/70 hover:bg-emerald-500 text-white disabled:opacity-40 transition">
-                <Save className="w-5 h-5" />
+          <div className="flex flex-col gap-2.5">
+            <div className="flex items-center justify-center gap-2.5">
+              {(canStart || isArtist) && (
+                (() => {
+                  const turnBtnDisabled = isArtist ? !!disabled : !canStart; // starting allowed even if drawing disabled
+                  return (
+                    <button
+                      onClick={() => {
+                        if (turnBtnDisabled) return;
+                        if (isArtist && onFinalizeTurn) {
+                          onFinalizeTurn();
+                        } else if (canStart) {
+                          onStartTurn?.();
+                        }
+                      }}
+                      aria-label={isArtist ? 'Finalize Turn' : 'Start Turn'}
+                      title={isArtist ? 'Finalize Turn' : 'Start Turn'}
+                      className={`p-2 rounded-full text-white transition focus:outline-none focus:ring-2 focus:ring-white/50 ${
+                        turnBtnDisabled
+                          ? 'bg-blue-500/30 cursor-not-allowed'
+                          : isArtist
+                            ? 'bg-black/80 hover:bg-black'
+                            : 'bg-blue-600/80 hover:bg-blue-600'
+                      }`}
+                      disabled={turnBtnDisabled}
+                    >
+                      {isArtist ? <ClapperClosed className="w-4 h-4" /> : <ClapperOpen className="w-4 h-4" />}
+                    </button>
+                  );
+                })()
+              )}
+              <button onClick={() => !disabled && onSave()} disabled={disabled} aria-label="Save Frame" className="p-2 rounded-full bg-emerald-500/70 hover:bg-emerald-500 text-white disabled:opacity-40 transition">
+                <Save className="w-4 h-4" />
               </button>
-              <button onClick={() => !disabled && onUndo?.()} disabled={disabled} aria-label="Undo" title="Undo" className="p-2.5 rounded-full bg-indigo-500/70 hover:bg-indigo-500 text-white disabled:opacity-40 transition">
-                <Undo2 className="w-5 h-5" />
+              <button onClick={() => !disabled && onUndo?.()} disabled={disabled} aria-label="Undo" title="Undo" className="p-2 rounded-full bg-indigo-500/70 hover:bg-indigo-500 text-white disabled:opacity-40 transition">
+                <Undo2 className="w-4 h-4" />
               </button>
-              <button onClick={() => !disabled && onClear()} disabled={disabled} aria-label="Clear Canvas" className="p-2.5 rounded-full bg-red-500/70 hover:bg-red-500 text-white disabled:opacity-40 transition">
-                <Trash2 className="w-5 h-5" />
+              <button onClick={() => !disabled && onClear()} disabled={disabled} aria-label="Clear Canvas" className="p-2 rounded-full bg-red-500/70 hover:bg-red-500 text-white disabled:opacity-40 transition">
+                <Trash2 className="w-4 h-4" />
               </button>
             </div>
             {typeof timeLeft === 'number' && (
-              <div className="flex items-center justify-center gap-2 text-white/90 text-[11px] font-mono">
+              <div className="flex items-center justify-center gap-2 text-white/90 text-[11px] font-mono flex-wrap">
                 <Clock className="w-4 h-4 text-white/80" />
                 <span>{new Date(timeLeft * 1000).toISOString().substring(11,19)}</span>
-                <div className="flex items-center gap-2">
-                  {artistActionButton}
-                  {lobbyToggleButton}
-                </div>
+                <span className="text-white/60">|
+                  <span className="ml-1 font-semibold text-white/90">{currentArtist ? currentArtist : '—'}</span>
+                </span>
               </div>
             )}
           </div>
@@ -176,9 +233,36 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
       );
     }
     if (key === 'brushMode') {
+      const presets: BrushPreset[] = allBrushPresets;
       return (
         <PanelWrapper key={key} title="Brushes" {...common}>
-          <div className="text-white/60 text-[11px] italic text-center py-4 select-none">No brushes</div>
+          <div className="grid grid-cols-2 gap-2">
+            {presets.map(p => {
+              const active = p.id === brushPresetId;
+              const Icon = () => (
+                <span className="inline-block w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold"
+                  style={{
+                    background: p.engine === 'mangaPen' ? 'linear-gradient(135deg,#fff 0%,#ccc 100%)' : 'linear-gradient(135deg,#f5f5f5 0%,#d0d0d0 100%)',
+                    color: '#222',
+                    boxShadow: active ? '0 0 0 2px rgba(255,255,255,.5)' : '0 0 0 1px rgba(255,255,255,.25)'
+                  }}>
+                  {p.engine === 'mangaPen' ? 'INK' : 'P'}
+                </span>
+              );
+              return (
+                <button
+                  key={p.id}
+                  disabled={disabled}
+                  onClick={() => { setBrushPresetId?.(p.id); setBrushSize(p.size); }}
+                  className={`flex flex-col items-center gap-1 p-1.5 rounded-md border text-white/70 hover:text-white transition ${active ? 'bg-white/25 border-white/60' : 'bg-white/10 border-white/20 hover:bg-white/20'} disabled:opacity-40`}
+                  title={`${p.name}`}
+                >
+                  <Icon />
+                  <span className="text-[9px] leading-tight text-center">{p.name.split(' ').slice(-1)[0]}</span>
+                </button>
+              );
+            })}
+          </div>
         </PanelWrapper>
       );
     }
