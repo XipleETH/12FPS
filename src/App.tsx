@@ -465,14 +465,7 @@ function App() {
   <Header currentView={currentView} setCurrentView={setCurrentView} />
   <div className="max-w-6xl mx-auto px-3 pb-4">
         {/* Turn / Lobby banner */}
-        {turnInfo && (
-          <div className="mb-4 text-xs text-white/80 bg-white/10 border border-white/20 rounded-lg p-3 flex flex-wrap gap-4 items-center">
-            <div><span className="font-semibold">User:</span> {currentUser}</div>
-            <div><span className="font-semibold">Artist:</span> {turnInfo.currentArtist || '—'}</div>
-            <div><span className="font-semibold">Ends in:</span> {new Date(timeLeft * 1000).toISOString().substring(11,19)}</div>
-            {/* Start / Finalize buttons moved into Actions side panel */}
-          </div>
-        )}
+  {/* Removed top status banner (User / Artist / Ends in) */}
         {currentView === 'draw' && (
           <div className={`w-full flex justify-center gap-6 ${paletteSide === 'left' ? 'flex-row' : 'flex-row-reverse'}`}>
             <SidePanels

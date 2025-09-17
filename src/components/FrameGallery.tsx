@@ -50,7 +50,7 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-6">
   {showPending && pendingFrame && (
           <div
             className="relative bg-white/10 backdrop-blur-sm rounded-2xl overflow-hidden border border-yellow-400/40 hover:bg-white/20 transition-all duration-300"
@@ -78,7 +78,9 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
             </div>
           </div>
         )}
-        {frames.map((frame, index) => (
+        {[...frames].slice().reverse().map((frame, revIndex) => {
+          const index = frames.length - 1 - revIndex; // original index preserved for numbering
+          return (
           <div
             key={frame.id}
             className="bg-white/10 backdrop-blur-sm rounded-2xl overflow-hidden border border-white/20 hover:bg-white/20 transition-all duration-300 transform hover:scale-[1.02]"
@@ -109,7 +111,8 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
               </div>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
