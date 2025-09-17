@@ -577,43 +577,139 @@ router.get('/api/week', async (_req,res)=>{
     res.status(500).json({ error:'week info failed', message:e?.message });
   }
 });
-// Weekly chat endpoints
+// Weekly chat endpoints (persist across the whole week in Devvit Redis)
 interface ChatMessage { id:string; user:string; body:string; ts:number; week:number; }
-const WEEK_CHAT_KEY = (postId:string,w:number)=>`chat:${postId}:week:${w}`;
+const WEEK_CHAT_KEY = (postId:string,w:number)=>`chat:${postId}:week:${w}`; // JSON array key
+const MAX_CHAT_MESSAGES = 500;
+
 router.get('/api/chat', async (req,res)=>{
   try {
-    const { postId } = context; if(!postId) return res.json({ messages: [] });
+    const postId = context.postId;
+    if(!postId){
+      console.warn('[chat:get] missing postId');
+      return res.json({ messages: [], week: 0, postId: null });
+    }
+    console.log('[chat:get] postId', postId, 'query.week', req.query.week);
     const weekParam = req.query.week ? parseInt(String(req.query.week)) : undefined;
-    const currentWeek = await ensureCurrentWeek(); const targetWeek = weekParam || currentWeek;
-    const raw = await redis.get(WEEK_CHAT_KEY(postId, targetWeek));
-    const messages: ChatMessage[] = raw ? JSON.parse(raw) : [];
-    res.json({ messages, week: targetWeek });
+    const currentWeek = await ensureCurrentWeek();
+    const targetWeek = weekParam || currentWeek;
+  const raw = await redis.get(WEEK_CHAT_KEY(postId, targetWeek));
+  let messages: ChatMessage[] = [];
+  if(raw){ try { messages = JSON.parse(raw); } catch { messages = []; } }
+  console.log('[chat:get] returning', messages.length, 'messages week', targetWeek);
+  res.json({ messages, week: targetWeek, postId });
   } catch(e:any){
     console.error('[devvit api/chat:get] error', e?.message);
     res.json({ messages: [] });
   }
 });
+
+// Simple in-memory subscriber map for SSE (per process). Devvit environment typically single process.
+type SSEClient = { res: express.Response; week:number; postId:string };
+const sseClients: Set<SSEClient> = new Set();
+
+function broadcastChatMessage(postId:string, week:number, msg:ChatMessage){
+  for(const c of sseClients){
+    if(c.postId===postId && c.week===week){
+      try { c.res.write(`event: message\n` + `data: ${JSON.stringify(msg)}\n\n`); } catch {}
+    }
+  }
+}
+
+router.get('/api/chat/stream', async (req,res)=>{
+  try {
+    const postId = context.postId;
+    if(!postId){
+      console.warn('[chat/stream] missing postId');
+      return res.status(400).end();
+    }
+  console.log('[chat:stream] open postId', postId, 'weekQ', req.query.week);
+    const weekParam = req.query.week ? parseInt(String(req.query.week)) : undefined;
+    const currentWeek = await ensureCurrentWeek();
+    const targetWeek = weekParam || currentWeek;
+    res.setHeader('Content-Type','text/event-stream');
+    res.setHeader('Cache-Control','no-cache');
+    res.setHeader('Connection','keep-alive');
+    res.flushHeaders?.();
+    // Send current history once
+  const raw = await redis.get(WEEK_CHAT_KEY(postId, targetWeek));
+  let messages: ChatMessage[] = [];
+  if(raw){ try { messages = JSON.parse(raw); } catch { messages = []; } }
+  res.write(`event: init\n` + `data: ${JSON.stringify(messages)}\n\n`);
+    const client:SSEClient = { res, week: targetWeek, postId };
+    sseClients.add(client);
+    req.on('close', ()=>{ sseClients.delete(client); });
+  } catch(e:any){
+    console.error('[devvit api/chat/stream] error', e?.message);
+    res.status(500).end();
+  }
+});
+
 router.post('/api/chat', async (req,res)=>{
   try {
-    const { postId } = context; if(!postId) return res.status(400).json({ error:'post not found' });
-    const username = await reddit.getCurrentUsername(); if(!username) return res.status(401).json({ error:'auth required' });
+    const postId = context.postId;
+    if(!postId){
+      return res.status(400).json({ error:'post not found' });
+    }
+    let username = await reddit.getCurrentUsername();
+    if(!username){
+      username = 'anon';
+    }
+  console.log('[chat:post] incoming body', typeof req.body?.body, 'len', (req.body?.body||'').length, 'user', username, 'postId', postId);
     const { body } = req.body || {};
     if(typeof body !== 'string' || !body.trim()) return res.status(400).json({ error:'empty' });
     if(body.length > 280) return res.status(400).json({ error:'too long' });
     const week = await ensureCurrentWeek();
-    const key = WEEK_CHAT_KEY(postId, week);
-    const raw = await redis.get(key);
-    const messages: ChatMessage[] = raw ? JSON.parse(raw) : [];
-    const msg: ChatMessage = { id: Date.now().toString(36)+Math.random().toString(36).slice(2,6), user: username, body: body.trim(), ts: Date.now(), week };
-    messages.push(msg);
-    // trim last 500 messages to avoid unbounded growth
-    const trimmed = messages.slice(-500);
-    await redis.set(key, JSON.stringify(trimmed));
+  const key = WEEK_CHAT_KEY(postId, week);
+  const msg: ChatMessage = { id: Date.now().toString(36)+Math.random().toString(36).slice(2,6), user: username, body: body.trim(), ts: Date.now(), week };
+  const raw = await redis.get(key);
+  let arr: ChatMessage[] = [];
+  if(raw){ try { arr = JSON.parse(raw); } catch { arr = []; } }
+  arr.push(msg);
+  if(arr.length > MAX_CHAT_MESSAGES) arr = arr.slice(-MAX_CHAT_MESSAGES);
+  await redis.set(key, JSON.stringify(arr));
+    console.log('[chat:post] stored', msg.id, 'user', username, 'postId', postId, 'week', week, 'size', arr.length);
+    broadcastChatMessage(postId, week, msg);
     res.json({ ok:true, message: msg });
   } catch(e:any){
     console.error('[devvit api/chat:post] error', e?.message);
     res.status(500).json({ error:'chat failed', message:e?.message });
   }
+});
+
+// Debug endpoint for chat storage
+router.get('/api/chat/debug', async (req,res)=>{
+  try {
+    const postId = context.postId;
+    const weekParam = req.query.week ? parseInt(String(req.query.week)) : undefined;
+    const currentWeek = await ensureCurrentWeek();
+    const targetWeek = weekParam || currentWeek;
+    if(!postId){ return res.json({ ok:false, reason:'no postId', currentWeek, targetWeek }); }
+    const key = WEEK_CHAT_KEY(postId, targetWeek);
+    let raw = await redis.get(key);
+    let arr: ChatMessage[] = [];
+    if(raw){ try { arr = JSON.parse(raw); } catch { raw = raw?.slice(0,200)+'/*parse error*/'; }
+    }
+    // Optional simulate write
+    if(req.query.simulate === '1'){
+      const msg: ChatMessage = { id: 'dbg-'+Date.now().toString(36), user: 'debug', body: 'debug message', ts: Date.now(), week: targetWeek };
+      arr.push(msg);
+      if(arr.length > MAX_CHAT_MESSAGES) arr = arr.slice(-MAX_CHAT_MESSAGES);
+      await redis.set(key, JSON.stringify(arr));
+      raw = await redis.get(key);
+    }
+    res.json({ ok:true, postId, currentWeek, targetWeek, key, rawLength: raw? raw.length: 0, count: arr.length, sampleLast: arr.slice(-3) });
+  } catch(e:any){
+    console.error('[chat:debug] error', e?.message);
+    res.status(500).json({ ok:false, error: e?.message });
+  }
+});
+
+// Simple health endpoint for chat diagnostics
+router.get('/api/chat/health', async (_req,res)=>{
+  try {
+    res.json({ ok:true, postId: context.postId || null });
+  } catch(e:any){ res.status(500).json({ ok:false, error:e?.message }); }
 });
 // Use router middleware
 app.use(router);
