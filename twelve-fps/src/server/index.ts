@@ -577,6 +577,44 @@ router.get('/api/week', async (_req,res)=>{
     res.status(500).json({ error:'week info failed', message:e?.message });
   }
 });
+// Weekly chat endpoints
+interface ChatMessage { id:string; user:string; body:string; ts:number; week:number; }
+const WEEK_CHAT_KEY = (postId:string,w:number)=>`chat:${postId}:week:${w}`;
+router.get('/api/chat', async (req,res)=>{
+  try {
+    const { postId } = context; if(!postId) return res.json({ messages: [] });
+    const weekParam = req.query.week ? parseInt(String(req.query.week)) : undefined;
+    const currentWeek = await ensureCurrentWeek(); const targetWeek = weekParam || currentWeek;
+    const raw = await redis.get(WEEK_CHAT_KEY(postId, targetWeek));
+    const messages: ChatMessage[] = raw ? JSON.parse(raw) : [];
+    res.json({ messages, week: targetWeek });
+  } catch(e:any){
+    console.error('[devvit api/chat:get] error', e?.message);
+    res.json({ messages: [] });
+  }
+});
+router.post('/api/chat', async (req,res)=>{
+  try {
+    const { postId } = context; if(!postId) return res.status(400).json({ error:'post not found' });
+    const username = await reddit.getCurrentUsername(); if(!username) return res.status(401).json({ error:'auth required' });
+    const { body } = req.body || {};
+    if(typeof body !== 'string' || !body.trim()) return res.status(400).json({ error:'empty' });
+    if(body.length > 280) return res.status(400).json({ error:'too long' });
+    const week = await ensureCurrentWeek();
+    const key = WEEK_CHAT_KEY(postId, week);
+    const raw = await redis.get(key);
+    const messages: ChatMessage[] = raw ? JSON.parse(raw) : [];
+    const msg: ChatMessage = { id: Date.now().toString(36)+Math.random().toString(36).slice(2,6), user: username, body: body.trim(), ts: Date.now(), week };
+    messages.push(msg);
+    // trim last 500 messages to avoid unbounded growth
+    const trimmed = messages.slice(-500);
+    await redis.set(key, JSON.stringify(trimmed));
+    res.json({ ok:true, message: msg });
+  } catch(e:any){
+    console.error('[devvit api/chat:post] error', e?.message);
+    res.status(500).json({ error:'chat failed', message:e?.message });
+  }
+});
 // Use router middleware
 app.use(router);
 

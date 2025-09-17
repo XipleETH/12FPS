@@ -7,6 +7,7 @@ import { Header } from './components/Header';
 import { FrameGallery } from './components/FrameGallery';
 import { VideoPlayer } from './components/VideoPlayer';
 import { PaletteVoting } from './components/PaletteVoting';
+import { Chat } from './components/Chat'; // <-- Import Chat component
 // Header removed: navigation moved into SidePanels
 import { ZoomIn, ZoomOut } from 'lucide-react';
 
@@ -608,9 +609,7 @@ function App() {
         )}
 
         {currentView === 'chat' && (
-          <div className="max-w-3xl mx-auto text-white/80 text-sm bg-white/10 border border-white/20 rounded-xl p-4">
-            Chat is coming soon. For now, use Gallery, Video, or Vote.
-          </div>
+          <Chat currentWeek={currentWeek} currentUser={currentUser} />
         )}
       </div>
     </div>
