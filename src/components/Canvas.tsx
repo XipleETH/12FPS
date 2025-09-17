@@ -612,18 +612,18 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
               src={onionImage}
               alt="previous frame"
               className="absolute inset-0 pointer-events-none"
-              style={{ width: '100%', height: '100%', objectFit: 'fill', opacity: Math.max(0, Math.min(1, onionOpacity)) }}
+              style={{ width: '100%', height: '100%', objectFit: 'fill', opacity: 1 }}
             />
           )}
           <canvas
             ref={canvasRef}
-            className={`${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-crosshair'} absolute inset-0 bg-white select-none`}
+            className={`${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-crosshair'} absolute inset-0 bg-white select-none transition-opacity`}
             data-drawing={isDrawing ? 'true' : 'false'}
             style={{
               width: '100%',
               height: '100%',
               touchAction: 'none',
-              opacity: 1
+              opacity: onionImage ? (1 - Math.max(0, Math.min(1, onionOpacity))) : 1
             }}
             onTouchStart={handleTouchStart}
             onTouchMove={handleTouchMove}
