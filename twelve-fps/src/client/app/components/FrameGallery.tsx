@@ -1,9 +1,13 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useCallback } from 'react';
 import type { Frame } from '../RootApp';
 import { User, Calendar } from 'lucide-react';
 
 interface FrameGalleryProps { frames: Frame[]; }
 export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames }) => {
+  const [openWeeks, setOpenWeeks] = useState<Record<number, boolean>>({});
+  const toggleWeek = useCallback((week:number)=>{
+    setOpenWeeks(o=>({...o,[week]:!o[week]}));
+  },[]);
   const formatDate = (timestamp: number) => new Date(timestamp).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
   if (frames.length === 0) return (
     <div className="text-center py-12">
@@ -35,37 +39,48 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames }) => {
       {grouped.map(([week, list])=>{
         const sorted = [...list].sort((a,b)=>a.timestamp-b.timestamp);
         return (
-          <div key={week} className="space-y-2">
-            <div className="flex items-center justify-between">
-              <h3 className="text-white/90 font-semibold text-sm tracking-wide uppercase">Semana {week}</h3>
+          <div key={week} className="space-y-1">
+            <button
+              type="button"
+              onClick={()=>toggleWeek(week)}
+              className="w-full group flex items-center justify-between rounded-md px-3 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-left transition-colors"
+            >
+              <div className="flex items-center space-x-3">
+                <div className={`w-5 h-5 rounded-sm flex items-center justify-center text-[10px] font-bold tracking-wide ${openWeeks[week] ? 'bg-green-500/70 text-black':'bg-white/15 text-white/70'} transition-colors`}>
+                  {openWeeks[week] ? '-' : '+'}
+                </div>
+                <h3 className="text-white/90 font-semibold text-sm tracking-wide uppercase">Semana {week}</h3>
+              </div>
               <span className="text-white/40 text-[10px]">{sorted.length} frames</span>
-            </div>
-            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-6 gap-3">
-              {[...sorted].reverse().map((frame)=>{
-                const index = frames.indexOf(frame);
-                return (
-                  <div key={frame.id} className="bg-white/10 backdrop-blur-sm rounded-xl overflow-hidden border border-white/10 hover:bg-white/20 transition-colors duration-200">
-                    <div className="relative aspect-[540/740] bg-black/40 flex items-center justify-center">
-                      <img src={frame.imageData} alt={`Frame ${index+1}`} className="w-full h-full object-contain" loading="lazy" />
+            </button>
+            {openWeeks[week] && (
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-6 gap-3 pt-1">
+                {[...sorted].reverse().map((frame)=>{
+                  const index = frames.indexOf(frame);
+                  return (
+                    <div key={frame.id} className="bg-white/10 backdrop-blur-sm rounded-xl overflow-hidden border border-white/10 hover:bg-white/20 transition-colors duration-200">
+                      <div className="relative aspect-[540/740] bg-black/40 flex items-center justify-center">
+                        <img src={frame.imageData} alt={`Frame ${index+1}`} className="w-full h-full object-contain" loading="lazy" />
+                      </div>
+                      <div className="p-2">
+                        <div className="flex items-center justify-between mb-0.5">
+                          <span className="text-white font-semibold text-[10px]">#{index+1}</span>
+                          <span className="text-white/50 text-[9px]">{new Date(frame.timestamp).toLocaleTimeString()}</span>
+                        </div>
+                        <div className="flex items-center space-x-1.5 text-white/70 text-[9px] mb-0.5">
+                          <User className="w-3 h-3" />
+                          <span className="truncate max-w-[70px]">{frame.artist}</span>
+                        </div>
+                        <div className="flex items-center space-x-1.5 text-white/60 text-[8px]">
+                          <Calendar className="w-3 h-3" />
+                          <span>{formatDate(frame.timestamp)}</span>
+                        </div>
+                      </div>
                     </div>
-                    <div className="p-2">
-                      <div className="flex items-center justify-between mb-0.5">
-                        <span className="text-white font-semibold text-[10px]">#{index+1}</span>
-                        <span className="text-white/50 text-[9px]">{new Date(frame.timestamp).toLocaleTimeString()}</span>
-                      </div>
-                      <div className="flex items-center space-x-1.5 text-white/70 text-[9px] mb-0.5">
-                        <User className="w-3 h-3" />
-                        <span className="truncate max-w-[70px]">{frame.artist}</span>
-                      </div>
-                      <div className="flex items-center space-x-1.5 text-white/60 text-[8px]">
-                        <Calendar className="w-3 h-3" />
-                        <span>{formatDate(frame.timestamp)}</span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         );
       })}
