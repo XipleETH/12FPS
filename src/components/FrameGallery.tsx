@@ -63,9 +63,9 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
 
   {showPending && pendingFrame && (
           <div className="max-w-[1580px] mx-auto px-2">
-            <div className="mb-6">
-              <h3 className="text-white/80 text-lg font-semibold mb-2">Pendiente</h3>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4">
+              <div className="mb-4">
+              <h3 className="text-white/80 text-sm font-semibold mb-1 tracking-wide uppercase">Pendiente</h3>
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-6 gap-3">
                 <div
                   className="relative bg-white/10 backdrop-blur-sm rounded-2xl overflow-hidden border border-yellow-400/40 hover:bg-white/20 transition-all duration-300"
                 >
@@ -80,12 +80,12 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
                       En progreso
                     </div>
                   </div>
-                  <div className="p-3">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-white font-bold text-xs">(día)</span>
-                      <span className="text-white/60 text-[11px]">No publicado</span>
+                  <div className="p-2">
+                    <div className="flex items-center justify-between mb-0.5">
+                      <span className="text-white font-semibold text-[10px]">(día)</span>
+                      <span className="text-white/60 text-[10px]">No publicado</span>
                     </div>
-                    <div className="flex items-center space-x-2 text-white/70 text-[11px]">
+                    <div className="flex items-center space-x-1.5 text-white/70 text-[10px]">
                       <Calendar className="w-3 h-3" />
                       <span>{formatDate(pendingFrame.startedAt)}</span>
                     </div>
@@ -99,32 +99,32 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
   {grouped.map(([week, list])=>{
           const sorted = [...list].sort((a,b)=>a.timestamp-b.timestamp);
           return (
-            <div key={week} className="space-y-3 max-w-[1580px] mx-auto px-2">
+            <div key={week} className="space-y-2 max-w-[1580px] mx-auto px-2">
               <div className="flex items-center justify-between">
-                <h3 className="text-white/90 font-semibold text-xl">Semana {week}</h3>
-                <span className="text-white/40 text-xs">{sorted.length} frames</span>
+                <h3 className="text-white/90 font-semibold text-base tracking-wide uppercase">Semana {week}</h3>
+                <span className="text-white/40 text-[10px]">{sorted.length} frames</span>
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4">
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-6 gap-3">
                 {[...sorted].reverse().map((frame)=>{
                   const index = frames.indexOf(frame); // global index
                   return (
                     <div
                       key={frame.id}
-                      className="bg-white/10 backdrop-blur-sm rounded-2xl overflow-hidden border border-white/15 hover:bg-white/20 transition-all duration-300"
+                      className="bg-white/10 backdrop-blur-sm rounded-xl overflow-hidden border border-white/10 hover:bg-white/20 transition-colors duration-200"
                     >
                       <div className="relative aspect-[540/740] bg-black/40 flex items-center justify-center">
                         <img src={frame.imageData} alt={`Frame ${index+1}`} className="w-full h-full object-contain" loading="lazy" />
                       </div>
-                      <div className="p-3">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-white font-bold text-xs">#{index+1}</span>
-                          <span className="text-white/50 text-[11px]">{new Date(frame.timestamp).toLocaleTimeString()}</span>
+                      <div className="p-2">
+                        <div className="flex items-center justify-between mb-0.5">
+                          <span className="text-white font-semibold text-[10px]">#{index+1}</span>
+                          <span className="text-white/50 text-[9px]">{new Date(frame.timestamp).toLocaleTimeString()}</span>
                         </div>
-                        <div className="flex items-center space-x-2 text-white/70 text-[11px] mb-1">
+                        <div className="flex items-center space-x-1.5 text-white/70 text-[9px] mb-0.5">
                           <User className="w-3 h-3" />
-                          <span className="truncate max-w-[90px]">{frame.artist}</span>
+                          <span className="truncate max-w-[70px]">{frame.artist}</span>
                         </div>
-                        <div className="flex items-center space-x-2 text-white/60 text-[10px]">
+                        <div className="flex items-center space-x-1.5 text-white/60 text-[8px]">
                           <Calendar className="w-3 h-3" />
                           <span>{formatDate(frame.timestamp)}</span>
                         </div>
