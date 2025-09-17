@@ -173,20 +173,48 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
         return;
       }
       // Estilo manga (entintado): trazos vectoriales suavizados a partir de puntos bufferizados
-      const p0 = jitterPoint(from);
-      const p1 = jitterPoint(to);
-      ctx.globalAlpha = opacityMul;
-      ctx.strokeStyle = activeColor;
-      const pressureScale = simulatedPressure * taperFactor;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      ctx.lineWidth = Math.max(0.5, baseSize * 0.4 + baseSize * 0.6 * pressureScale);
-      ctx.beginPath();
-      ctx.moveTo(p0.x, p0.y);
-      ctx.lineTo(p1.x, p1.y);
-      ctx.stroke();
-      strokeProgressRef.current += dist;
-      ctx.globalAlpha = 1;
+      if (brushPreset?.texture === 'marker') {
+        // Simulación marcador: ancho constante, relleno múltiple de pasadas semi-opacas con leve ruido perpendicular
+        const passes = 3;
+        const width = Math.max(1, baseSize * 0.85);
+        const dirX = to.x - from.x;
+        const dirY = to.y - from.y;
+        const len = Math.hypot(dirX, dirY) || 1;
+        const nx = -dirY / len; // normal
+        const ny = dirX / len;
+        for (let p = 0; p < passes; p++) {
+          const offset = ((p - (passes - 1) / 2) / (passes)) * (width * 0.5);
+          ctx.globalAlpha = opacityMul * (0.55 + 0.25 * Math.random());
+          ctx.strokeStyle = activeColor;
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          ctx.lineWidth = width * (0.92 + Math.random() * 0.1);
+          ctx.beginPath();
+          const jf = jitterPoint({ x: from.x + nx * offset, y: from.y + ny * offset });
+          const jt = jitterPoint({ x: to.x + nx * offset, y: to.y + ny * offset });
+          ctx.moveTo(jf.x, jf.y);
+          ctx.lineTo(jt.x, jt.y);
+          ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+        strokeProgressRef.current += dist;
+        return;
+      } else {
+        const p0 = jitterPoint(from);
+        const p1 = jitterPoint(to);
+        ctx.globalAlpha = opacityMul;
+        ctx.strokeStyle = activeColor;
+        const pressureScale = simulatedPressure * taperFactor;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = Math.max(0.5, baseSize * 0.4 + baseSize * 0.6 * pressureScale);
+        ctx.beginPath();
+        ctx.moveTo(p0.x, p0.y);
+        ctx.lineTo(p1.x, p1.y);
+        ctx.stroke();
+        strokeProgressRef.current += dist;
+        ctx.globalAlpha = 1;
+      }
     };
 
   // Old mouse handlers removed; pointer events unify behavior

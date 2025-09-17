@@ -233,8 +233,8 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
       );
     }
     if (key === 'brushMode') {
-      // Filtrar a solo ink y pencil por los nuevos IDs
-      const presets: BrushPreset[] = allBrushPresets.filter(p => p.id === 'ink' || p.id === 'pencil');
+      // Incluir ink, pencil y marker
+      const presets: BrushPreset[] = allBrushPresets.filter(p => ['ink','pencil','marker'].includes(p.id));
       const InkIcon = ({ active }: { active: boolean }) => (
         <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="white" fill="none" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
           <path d="M5 19c4-1 7-4 9-8 1-2 2-4 2-6" />
@@ -248,12 +248,18 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
           <path d="m14.06 5.19 3.75 3.75" />
         </svg>
       );
+      const MarkerIcon = ({ active }: { active: boolean }) => (
+        <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="white" fill="none" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
+          <path d="M4 20h16" />
+          <path d="M7 16 15.5 4.5a2.1 2.1 0 0 1 3 2.9L11 19l-4 1 1-4Z" />
+        </svg>
+      );
       return (
         <PanelWrapper key={key} title="Brushes" {...common}>
           <div className="grid grid-cols-2 gap-2">
             {presets.map(p => {
               const active = p.id === brushPresetId;
-              const Icon = p.id === 'ink' ? InkIcon : PencilIcon;
+              const Icon = p.id === 'ink' ? InkIcon : p.id === 'pencil' ? PencilIcon : MarkerIcon;
               return (
                 <button
                   key={p.id}

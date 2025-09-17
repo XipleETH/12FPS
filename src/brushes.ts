@@ -34,7 +34,16 @@ export const brushKits: Record<BrushStyle, BrushPreset[]> = {
     }
   ],
   comic: [
-    // Eliminado bold; lista vacía o podría duplicar ink si se desea
+    {
+      id: 'marker',
+      name: 'Marker',
+      engine: 'mangaPen',
+      size: 9,
+      opacity: 0.9,
+      taper: 0.2, // marcador casi plano
+      jitter: 0.01,
+      texture: 'marker'
+    }
   ],
   watercolor: [
     {
