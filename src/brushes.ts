@@ -23,8 +23,8 @@ export interface BrushPreset {
 export const brushKits: Record<BrushStyle, BrushPreset[]> = {
   anime: [
     {
-      id: 'manga-ink-fine',
-      name: 'Manga Ink Fine',
+      id: 'ink',
+      name: 'Ink',
       engine: 'mangaPen',
       size: 6,
       opacity: 1,
@@ -34,38 +34,18 @@ export const brushKits: Record<BrushStyle, BrushPreset[]> = {
     }
   ],
   comic: [
-    {
-      id: 'manga-ink-bold',
-      name: 'Manga Ink Bold',
-      engine: 'mangaPen',
-      size: 10,
-      opacity: 1,
-      taper: 0.55,
-      jitter: 0.015,
-      texture: 'none'
-    }
+    // Eliminado bold; lista vacía o podría duplicar ink si se desea
   ],
   watercolor: [
     {
-      id: 'pencil-hb',
-      name: 'Pencil HB',
+      id: 'pencil',
+      name: 'Pencil',
       engine: 'pencil',
       size: 8,
       opacity: 0.55,
       taper: 0.2,
       jitter: 0.08,
       hardness: 0.6,
-      texture: 'rough'
-    },
-    {
-      id: 'pencil-2b',
-      name: 'Pencil 2B',
-      engine: 'pencil',
-      size: 10,
-      opacity: 0.7,
-      taper: 0.25,
-      jitter: 0.1,
-      hardness: 0.5,
       texture: 'rough'
     }
   ],

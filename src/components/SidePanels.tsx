@@ -233,32 +233,39 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
       );
     }
     if (key === 'brushMode') {
-      const presets: BrushPreset[] = allBrushPresets;
+      // Filtrar a solo ink y pencil por los nuevos IDs
+      const presets: BrushPreset[] = allBrushPresets.filter(p => p.id === 'ink' || p.id === 'pencil');
+      const InkIcon = ({ active }: { active: boolean }) => (
+        <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="white" fill="none" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
+          <path d="M5 19c4-1 7-4 9-8 1-2 2-4 2-6" />
+          <path d="M15 5c0 2-1.2 3.2-2.4 4.4C10.8 11.2 9 13 8 16l-.7 2.1" />
+          <path d="M4 21h16" />
+        </svg>
+      );
+      const PencilIcon = ({ active }: { active: boolean }) => (
+        <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="white" fill="none" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
+          <path d="M3 17.25V21h3.75L18.81 8.94l-3.75-3.75L3 17.25Z" />
+          <path d="m14.06 5.19 3.75 3.75" />
+        </svg>
+      );
       return (
         <PanelWrapper key={key} title="Brushes" {...common}>
           <div className="grid grid-cols-2 gap-2">
             {presets.map(p => {
               const active = p.id === brushPresetId;
-              const Icon = () => (
-                <span className="inline-block w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold"
-                  style={{
-                    background: p.engine === 'mangaPen' ? 'linear-gradient(135deg,#fff 0%,#ccc 100%)' : 'linear-gradient(135deg,#f5f5f5 0%,#d0d0d0 100%)',
-                    color: '#222',
-                    boxShadow: active ? '0 0 0 2px rgba(255,255,255,.5)' : '0 0 0 1px rgba(255,255,255,.25)'
-                  }}>
-                  {p.engine === 'mangaPen' ? 'INK' : 'P'}
-                </span>
-              );
+              const Icon = p.id === 'ink' ? InkIcon : PencilIcon;
               return (
                 <button
                   key={p.id}
                   disabled={disabled}
                   onClick={() => { setBrushPresetId?.(p.id); setBrushSize(p.size); }}
-                  className={`flex flex-col items-center gap-1 p-1.5 rounded-md border text-white/70 hover:text-white transition ${active ? 'bg-white/25 border-white/60' : 'bg-white/10 border-white/20 hover:bg-white/20'} disabled:opacity-40`}
-                  title={`${p.name}`}
+                  className={`flex flex-col items-center gap-1 p-1.5 rounded-md border text-white/80 hover:text-white transition ${active ? 'bg-white/25 border-white/60' : 'bg-white/10 border-white/20 hover:bg-white/20'} disabled:opacity-40`}
+                  title={p.name}
                 >
-                  <Icon />
-                  <span className="text-[9px] leading-tight text-center">{p.name.split(' ').slice(-1)[0]}</span>
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center bg-white/10 ${active ? 'ring-2 ring-white/70' : 'ring-1 ring-white/30'}`}>
+                    <Icon active={active} />
+                  </div>
+                  <span className="text-[10px] leading-tight font-medium tracking-wide">{p.name}</span>
                 </button>
               );
             })}

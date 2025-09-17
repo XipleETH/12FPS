@@ -54,7 +54,7 @@ function App() {
 
   const [activeColor, setActiveColor] = useState('#FF6B6B');
   const [brushSize, setBrushSize] = useState(10);
-  const [brushPresetId, setBrushPresetId] = useState<string>('manga-ink-fine'); // TODO: hook up to brush panel selection
+  const [brushPresetId, setBrushPresetId] = useState<string>('ink'); // actualizado ID simple
   const [isDrawing, setIsDrawing] = useState(false);
   const [frames, setFrames] = useState<Frame[]>([]);
   // Frame temporal (solo cache local durante la sesión)
@@ -121,7 +121,10 @@ function App() {
   // No currentPreset while brushes are disabled
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const currentBrushPreset: BrushPreset | undefined = allBrushPresets.find(p=>p.id===brushPresetId);
+  let currentBrushPreset: BrushPreset | undefined = allBrushPresets.find(p=>p.id===brushPresetId);
+  if (!currentBrushPreset) {
+    currentBrushPreset = allBrushPresets.find(p=>p.id==='ink') || allBrushPresets[0];
+  }
   const [undoStack, setUndoStack] = useState<ImageData[]>([]);
   const [draftImage, setDraftImage] = useState<string | null>(null);
 

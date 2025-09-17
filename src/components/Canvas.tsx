@@ -125,7 +125,9 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
   const jitter = Math.max(0, Math.min(1, brushPreset?.jitter ?? 0.02));
   const taper = Math.max(0, Math.min(1, brushPreset?.taper ?? 0.6));
   // Simulación de presión: si device no da pressure, usamos velocidad inversa
-  const baseSize = brushPreset?.size || brushSize;
+  // Usar siempre el valor dinámico del slider (brushSize) como autoridad.
+  // El tamaño del preset solo sirve como valor inicial cuando se selecciona (SidePanels ya hace setBrushSize(p.size)).
+  const baseSize = brushSize; // antes: brushPreset?.size || brushSize (causaba que el slider no tuviera efecto cuando había preset)
   const dist = Math.hypot(to.x - from.x, to.y - from.y);
   const speed = dist; // px por frame event
   const simulatedPressure = pressure && pressure > 0 ? pressure : Math.max(0.15, Math.min(1, 1 - speed / 40));
