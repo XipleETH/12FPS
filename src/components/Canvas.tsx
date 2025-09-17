@@ -173,7 +173,44 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
         return;
       }
       // Estilo manga (entintado): trazos vectoriales suavizados a partir de puntos bufferizados
-      if (brushPreset?.texture === 'marker') {
+      if (brushPreset?.texture === 'charcoal') {
+        // Carbón: múltiples manchas/granos con opacidad variable, halo suave y acumulación rápida
+        const steps = Math.max(1, Math.floor(dist / Math.max(1, baseSize * 0.45)));
+        const dirX = (to.x - from.x) / steps;
+        const dirY = (to.y - from.y) / steps;
+        const grainCountBase = 10 + Math.floor(baseSize * 1.1);
+        for (let i = 0; i <= steps; i++) {
+          const cx = from.x + dirX * i;
+          const cy = from.y + dirY * i;
+          const grains = grainCountBase + Math.floor(Math.random() * 6);
+          for (let g = 0; g < grains; g++) {
+            const ang = Math.random() * Math.PI * 2;
+            const rad = (baseSize * 0.65) * Math.sqrt(Math.random());
+            const gx = cx + Math.cos(ang) * rad;
+            const gy = cy + Math.sin(ang) * rad * 0.85;
+            // Densidad central mayor; bordes más suaves
+            const edge = rad / (baseSize * 0.65);
+            const falloff = 1 - edge * edge;
+            const a = (brushPreset?.opacity ?? 0.65) * (0.18 + 0.55 * Math.random()) * falloff;
+            ctx.globalAlpha = Math.min(1, a);
+            const dotR = Math.max(0.5, baseSize * 0.06 + Math.random() * (baseSize * 0.22));
+            ctx.beginPath();
+            ctx.fillStyle = activeColor;
+            ctx.arc(gx, gy, dotR, 0, Math.PI * 2);
+            ctx.fill();
+            // Halo suave: trazo semitransparente grande para cohesión
+            if (Math.random() < 0.07) {
+              ctx.globalAlpha = a * 0.25;
+              ctx.beginPath();
+              ctx.arc(gx, gy, dotR * (2 + Math.random() * 2), 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+        }
+        ctx.globalAlpha = 1;
+        strokeProgressRef.current += dist;
+        return;
+      } else if (brushPreset?.texture === 'marker') {
         // Simulación marcador: ancho constante, relleno múltiple de pasadas semi-opacas con leve ruido perpendicular
         const passes = 3;
         const width = Math.max(1, baseSize * 0.85);

@@ -15,7 +15,7 @@ export interface BrushPreset {
   density?: number; // spray particles density multiplier
   particleSize?: [number, number]; // spray particle radius range in px
   drip?: boolean; // graffiti drip effect for spray
-  texture?: 'pencil' | 'marker' | 'rough' | 'none';
+  texture?: 'pencil' | 'marker' | 'rough' | 'charcoal' | 'none';
 }
 
 // Preset inicial del pincel de tinta manga: líneas nítidas con ligera variación
@@ -43,6 +43,17 @@ export const brushKits: Record<BrushStyle, BrushPreset[]> = {
       taper: 0.2, // marcador casi plano
       jitter: 0.01,
       texture: 'marker'
+    },
+    {
+      id: 'charcoal',
+      name: 'Charcoal',
+      engine: 'pencil',
+      size: 12,
+      opacity: 0.65,
+      taper: 0.15,
+      jitter: 0.12,
+      hardness: 0.4,
+      texture: 'charcoal'
     }
   ],
   watercolor: [

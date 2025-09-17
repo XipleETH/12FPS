@@ -233,8 +233,8 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
       );
     }
     if (key === 'brushMode') {
-      // Incluir ink, pencil y marker
-      const presets: BrushPreset[] = allBrushPresets.filter(p => ['ink','pencil','marker'].includes(p.id));
+  // Incluir ink, pencil, marker y charcoal
+  const presets: BrushPreset[] = allBrushPresets.filter(p => ['ink','pencil','marker','charcoal'].includes(p.id));
       const InkIcon = ({ active }: { active: boolean }) => (
         <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="white" fill="none" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
           <path d="M5 19c4-1 7-4 9-8 1-2 2-4 2-6" />
@@ -254,24 +254,29 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
           <path d="M7 16 15.5 4.5a2.1 2.1 0 0 1 3 2.9L11 19l-4 1 1-4Z" />
         </svg>
       );
+      const CharcoalIcon = ({ active }: { active: boolean }) => (
+        <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="white" fill="none" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
+          <path d="M5 19c2.5-1.2 5-2.4 7.2-5.2 1.8-2.2 2.8-4.4 3.3-6.5" />
+          <path d="M9 18c1.2-.6 2.4-1.3 3.5-2.4 2.4-2.3 3.8-5.3 4.3-8.1" />
+          <path d="M4 21h16" />
+        </svg>
+      );
       return (
         <PanelWrapper key={key} title="Brushes" {...common}>
           <div className="grid grid-cols-2 gap-2">
             {presets.map(p => {
               const active = p.id === brushPresetId;
-              const Icon = p.id === 'ink' ? InkIcon : p.id === 'pencil' ? PencilIcon : MarkerIcon;
+        const Icon = p.id === 'ink' ? InkIcon : p.id === 'pencil' ? PencilIcon : p.id === 'marker' ? MarkerIcon : CharcoalIcon;
               return (
                 <button
                   key={p.id}
                   disabled={disabled}
                   onClick={() => { setBrushPresetId?.(p.id); setBrushSize(p.size); }}
-                  className={`flex flex-col items-center gap-1 p-1.5 rounded-md border text-white/80 hover:text-white transition ${active ? 'bg-white/25 border-white/60' : 'bg-white/10 border-white/20 hover:bg-white/20'} disabled:opacity-40`}
+          className={`flex flex-col items-center gap-0.5 px-1.5 py-1 rounded-md text-white/80 hover:text-white transition ${active ? 'bg-white/15 border border-white/40' : 'hover:bg-white/10'} disabled:opacity-40`}
                   title={p.name}
                 >
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center bg-white/10 ${active ? 'ring-2 ring-white/70' : 'ring-1 ring-white/30'}`}>
-                    <Icon active={active} />
-                  </div>
-                  <span className="text-[10px] leading-tight font-medium tracking-wide">{p.name}</span>
+          <Icon active={active} />
+          <span className="text-[9px] leading-none font-medium tracking-wide">{p.name}</span>
                 </button>
               );
             })}
