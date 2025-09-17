@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Canvas } from './components/Canvas';
 import { SidePanels, PanelKey } from './components/SidePanels';
 import { AppHeader } from './components/AppHeader';
+import { Chat } from './components/Chat';
 import { Timer } from './components/Timer';
 import { FrameGallery } from './components/FrameGallery';
 import { VideoPlayer } from './components/VideoPlayer';
@@ -23,6 +24,8 @@ const RootApp: React.FC = () => {
   const [timeLeft, setTimeLeft] = useState(7200);
   const [isSessionActive, setIsSessionActive] = useState(false);
   const [currentWeek] = useState(1);
+  const [username,setUsername] = useState<string|null>(null);
+  useEffect(()=>{ (async ()=>{ try { const r = await fetch('/api/user'); if(r.ok){ const j=await r.json(); setUsername(j.username||null); } } catch{} })(); },[]);
   const [paletteSide, setPaletteSide] = useState<'left' | 'right'>('right');
   const [brushMode, setBrushMode] = useState<'solid' | 'soft' | 'fade' | 'spray'>('solid');
   const [brushStyle, setBrushStyle] = useState<BrushStyle>('anime');
@@ -72,7 +75,7 @@ const RootApp: React.FC = () => {
                   </div>
                 )}
                 <div className="inline-block rounded-xl border border-white/20 bg-white/10 backdrop-blur-sm" style={{ width: 540, height: 960 }}>
-                  <Canvas ref={canvasRef} activeColor={activeColor} brushSize={brushSize} isDrawing={isDrawing} setIsDrawing={setIsDrawing} disabled={!isSessionActive || timeLeft===0} brushMode={brushMode} brushPreset={currentPreset as any} tool={tool} onBeforeMutate={snapshotCanvas} zoom={zoom} onionImage={frames.length? frames[frames.length-1].imageData : undefined} onionOpacity={onionOpacity} />
+                  <Canvas ref={canvasRef} activeColor={activeColor} brushSize={brushSize} isDrawing={isDrawing} setIsDrawing={setIsDrawing} disabled={!isSessionActive || timeLeft===0} brushMode={brushMode} brushPreset={currentPreset as any} tool={tool} onBeforeMutate={snapshotCanvas} zoom={zoom} onionImage={frames.length? frames[frames.length-1]!.imageData : undefined} onionOpacity={onionOpacity} />
                 </div>
                 {paletteSide==='left' && (
                   <div className="flex flex-col gap-2 pt-2">
@@ -98,7 +101,9 @@ const RootApp: React.FC = () => {
         {currentView==='video' && <VideoPlayer frames={frames} />}
         {currentView==='voting' && <PaletteVoting />}
         {currentView==='chat' && (
-          <div className="max-w-3xl mx-auto text-white/80 text-sm bg-white/10 border border-white/20 rounded-xl p-4">Chat is coming soon.</div>
+          <div className="max-w-3xl mx-auto">
+            <Chat currentWeek={currentWeek} currentUser={username} />
+          </div>
         )}
       </div>
     </div>

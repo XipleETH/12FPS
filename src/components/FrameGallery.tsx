@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Frame } from '../App';
 import { User, Calendar } from 'lucide-react';
 
@@ -41,79 +41,101 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
     );
   }
 
-  return (
-    <div className="space-y-8">
-      <div className="text-center">
-        <h2 className="text-4xl font-bold text-white mb-4">Frame Gallery</h2>
-        <p className="text-white/70 text-lg">
-          {frames.length} frames published{showPending ? ' • 1 in progress' : ''}
-        </p>
-      </div>
+  // Group frames by paletteWeek
+  const grouped = useMemo(()=>{
+    const map = new Map<number, Frame[]>();
+    for(const f of frames){
+      const arr = map.get(f.paletteWeek) || [];
+      arr.push(f);
+      map.set(f.paletteWeek, arr);
+    }
+    return Array.from(map.entries()).sort((a,b)=>a[0]-b[0]);
+  },[frames]);
 
-  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-6">
+  return (
+      <div className="space-y-10">
+        <div className="text-center">
+          <h2 className="text-4xl font-bold text-white mb-2">Frame Gallery</h2>
+          <p className="text-white/70 text-sm sm:text-base">
+            {frames.length} frames publicados{showPending ? ' • 1 en progreso' : ''}
+          </p>
+        </div>
+
   {showPending && pendingFrame && (
-          <div
-            className="relative bg-white/10 backdrop-blur-sm rounded-2xl overflow-hidden border border-yellow-400/40 hover:bg-white/20 transition-all duration-300"
-          >
-            <div className="relative aspect-[540/740] bg-black/40 flex items-center justify-center">
-              <img
-                src={pendingFrame.imageData}
-                alt="Pending frame"
-                className="w-full h-full object-contain opacity-90"
-                loading="lazy"
-              />
-              <div className="absolute top-2 left-2 bg-yellow-500/80 text-black text-xs font-bold px-2 py-1 rounded">
-    En progreso
-              </div>
-            </div>
-            <div className="p-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-white font-bold">(día)</span>
-                <span className="text-white/60 text-sm">No publicado</span>
-              </div>
-              <div className="flex items-center space-x-2 text-white/70 text-sm">
-                <Calendar className="w-3 h-3" />
-                <span>{formatDate(pendingFrame.startedAt)}</span>
+          <div className="max-w-[1580px] mx-auto px-2">
+            <div className="mb-6">
+              <h3 className="text-white/80 text-lg font-semibold mb-2">Pendiente</h3>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4">
+                <div
+                  className="relative bg-white/10 backdrop-blur-sm rounded-2xl overflow-hidden border border-yellow-400/40 hover:bg-white/20 transition-all duration-300"
+                >
+                  <div className="relative aspect-[540/740] bg-black/40 flex items-center justify-center">
+                    <img
+                      src={pendingFrame.imageData}
+                      alt="Pending frame"
+                      className="w-full h-full object-contain opacity-90"
+                      loading="lazy"
+                    />
+                    <div className="absolute top-2 left-2 bg-yellow-500/80 text-black text-xs font-bold px-2 py-1 rounded">
+                      En progreso
+                    </div>
+                  </div>
+                  <div className="p-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-white font-bold text-xs">(día)</span>
+                      <span className="text-white/60 text-[11px]">No publicado</span>
+                    </div>
+                    <div className="flex items-center space-x-2 text-white/70 text-[11px]">
+                      <Calendar className="w-3 h-3" />
+                      <span>{formatDate(pendingFrame.startedAt)}</span>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
         )}
-        {[...frames].slice().reverse().map((frame, revIndex) => {
-          const index = frames.length - 1 - revIndex; // original index preserved for numbering
+
+  {grouped.map(([week, list])=>{
+          const sorted = [...list].sort((a,b)=>a.timestamp-b.timestamp);
           return (
-          <div
-            key={frame.id}
-            className="bg-white/10 backdrop-blur-sm rounded-2xl overflow-hidden border border-white/20 hover:bg-white/20 transition-all duration-300 transform hover:scale-[1.02]"
-          >
-            <div className="relative aspect-[540/740] bg-black/40 flex items-center justify-center">
-              <img
-                src={frame.imageData}
-                alt={`Frame ${index + 1}`}
-                className="w-full h-full object-contain"
-                loading="lazy"
-              />
+            <div key={week} className="space-y-3 max-w-[1580px] mx-auto px-2">
+              <div className="flex items-center justify-between">
+                <h3 className="text-white/90 font-semibold text-xl">Semana {week}</h3>
+                <span className="text-white/40 text-xs">{sorted.length} frames</span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4">
+                {[...sorted].reverse().map((frame)=>{
+                  const index = frames.indexOf(frame); // global index
+                  return (
+                    <div
+                      key={frame.id}
+                      className="bg-white/10 backdrop-blur-sm rounded-2xl overflow-hidden border border-white/15 hover:bg-white/20 transition-all duration-300"
+                    >
+                      <div className="relative aspect-[540/740] bg-black/40 flex items-center justify-center">
+                        <img src={frame.imageData} alt={`Frame ${index+1}`} className="w-full h-full object-contain" loading="lazy" />
+                      </div>
+                      <div className="p-3">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-white font-bold text-xs">#{index+1}</span>
+                          <span className="text-white/50 text-[11px]">{new Date(frame.timestamp).toLocaleTimeString()}</span>
+                        </div>
+                        <div className="flex items-center space-x-2 text-white/70 text-[11px] mb-1">
+                          <User className="w-3 h-3" />
+                          <span className="truncate max-w-[90px]">{frame.artist}</span>
+                        </div>
+                        <div className="flex items-center space-x-2 text-white/60 text-[10px]">
+                          <Calendar className="w-3 h-3" />
+                          <span>{formatDate(frame.timestamp)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-            
-            <div className="p-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-white font-bold">#{index + 1}</span>
-                <span className="text-white/60 text-sm">Week {frame.paletteWeek}</span>
-              </div>
-              
-              <div className="flex items-center space-x-2 text-white/70 text-sm mb-2">
-                <User className="w-3 h-3" />
-                <span>{frame.artist}</span>
-              </div>
-              
-              <div className="flex items-center space-x-2 text-white/70 text-sm">
-                <Calendar className="w-3 h-3" />
-                <span>{formatDate(frame.timestamp)}</span>
-              </div>
-            </div>
-          </div>
           );
         })}
       </div>
-    </div>
-  );
+    );
 };
