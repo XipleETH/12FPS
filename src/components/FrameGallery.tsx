@@ -1,14 +1,17 @@
 import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import { Frame } from '../App';
+import { allBrushPresets } from '../brushes';
 import { User, Calendar, ArrowBigUp, ArrowBigDown } from 'lucide-react';
 
 interface FrameGalleryProps {
   frames: Frame[];
   pendingFrame?: { imageData: string; startedAt: number } | null;
   initialVotes?: Record<string, { up: number; down: number; my: -1|0|1 }>;
+  // Active brushes for the current week (winners or defaults)
+  activeBrushIds?: string[];
 }
 
-export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame, initialVotes }) => {
+export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame, initialVotes, activeBrushIds }) => {
   const [openWeeks, setOpenWeeks] = useState<Record<number, boolean>>({});
   const [votes, setVotes] = useState<Record<string, { up: number; down: number; my: -1|0|1 }>>({});
   const toggleWeek = useCallback((week:number)=>{
@@ -145,7 +148,11 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
           const themes = ['Anime Inking', 'Retro Comic', 'Soft Watercolor'];
           const palette = weeklyPalettes[week % weeklyPalettes.length] || weeklyPalettes[0];
           const theme = themes[week % themes.length] || themes[0];
-          const selectedBrush = 'Ink'; // Week 1 used brush we have
+          // Map active brush ids to display names; fallback to Week 1 defaults when none
+          const activeIds = (activeBrushIds && activeBrushIds.length ? activeBrushIds : ['ink','pencil','marker','charcoal']).slice(0,4);
+          const activeBrushNames = activeIds
+            .map(id => allBrushPresets.find(p => p.id === id)?.name || id)
+            .join(', ');
           return (
             <div key={week} className="space-y-1 max-w-[1580px] mx-auto px-2">
               <button
@@ -164,7 +171,7 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
                         <span key={i} className="w-3 h-3 rounded-sm border border-white/30" style={{ backgroundColor: c }} />
                       ))}
                     </div>
-                    <span className="text-white/60 text-[10px]">Theme: {theme} • Brush: {selectedBrush}</span>
+                    <span className="text-white/60 text-[10px]">Theme: {theme} • Brushes: {activeBrushNames}</span>
                   </div>
                 </div>
                 <span className="text-white/40 text-[10px]">{sorted.length} frames</span>

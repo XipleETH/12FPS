@@ -1,9 +1,10 @@
 import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import type { Frame } from '../RootApp';
 import { User, Calendar, ArrowBigUp, ArrowBigDown } from 'lucide-react';
+import { allBrushPresets, type BrushPreset } from '../brushes';
 
-interface FrameGalleryProps { frames: Frame[]; initialVotes?: Record<string, { up:number; down:number; my:-1|0|1 }>; }
-export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, initialVotes }) => {
+interface FrameGalleryProps { frames: Frame[]; initialVotes?: Record<string, { up:number; down:number; my:-1|0|1 }>; activeBrushIds?: string[]; }
+export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, initialVotes, activeBrushIds }) => {
   const [openWeeks, setOpenWeeks] = useState<Record<number, boolean>>({});
   const [votes, setVotes] = useState<Record<string, { up: number; down: number; my: -1|0|1 }>>({});
   const [isMod, setIsMod] = useState(false);
@@ -146,8 +147,9 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, initialVotes
                     ];
                     const themes = ['Anime Inking', 'Retro Comic', 'Soft Watercolor'];
                     const palette = weeklyPalettes[week % weeklyPalettes.length] || weeklyPalettes[0];
-                    const theme = themes[week % themes.length] || themes[0];
-                    const selectedBrush = 'Ink';
+          const theme = themes[week % themes.length] || themes[0];
+          const ids = (activeBrushIds && activeBrushIds.length ? activeBrushIds : ['ink','pencil','marker','charcoal']).slice(0,4);
+                    const names = ids.map(id => (allBrushPresets.find((p: BrushPreset)=>p.id===id)?.name) || id).join(', ');
                     return (
                       <>
                         <div className="flex items-center gap-1">
@@ -155,7 +157,7 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, initialVotes
                             <span key={i} className="w-3 h-3 rounded-sm border border-white/30" style={{ backgroundColor: c }} />
                           ))}
                         </div>
-                        <span className="text-white/60 text-[10px]">Theme: {theme} • Brush: {selectedBrush}</span>
+            <span className="text-white/60 text-[10px]">Theme: {theme} • Brushes: {names}</span>
                       </>
                     );
                   })()}

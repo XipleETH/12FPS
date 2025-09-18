@@ -347,7 +347,7 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
       // Early out if trivial
       if (minX > maxX || minY > maxY) return;
 
-      // Relleno simple monocolor para mangaPen
+      // Relleno simple monocolor para mangaPen (pixel blending)
       const blendPixel = (di: number, a: number) => {
         const inv = 1 - a;
         const dr = data[di];
@@ -363,16 +363,151 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
         data[di + 2] = outB;
         data[di + 3] = Math.round(outA * 255);
       };
-      for (let y0 = minY; y0 <= maxY; y0++) {
-        let m = y0 * w + minX;
-        let di = m * 4;
-        for (let x0 = minX; x0 <= maxX; x0++, m++, di += 4) {
-          if (!mask[m]) continue;
-          if (opacityMul >= 0.999) {
-            data[di] = fillR; data[di + 1] = fillG; data[di + 2] = fillB; data[di + 3] = 255;
-          } else {
-            blendPixel(di, opacityMul);
+      
+      // If a brush texture is active, synthesize a textured fill instead of flat pixels
+      const texture = brushPreset?.texture ?? 'none';
+      const bboxW = maxX - minX + 1; // device px
+      const bboxH = maxY - minY + 1;
+      const baseSize = Math.max(1, Math.floor(brushSize * dpr));
+      const drawSolidFill = () => {
+        for (let y0 = minY; y0 <= maxY; y0++) {
+          let m = y0 * w + minX; let di = m * 4;
+          for (let x0 = minX; x0 <= maxX; x0++, m++, di += 4) {
+            if (!mask[m]) continue;
+            if (opacityMul >= 0.999) { data[di] = fillR; data[di + 1] = fillG; data[di + 2] = fillB; data[di + 3] = 255; }
+            else blendPixel(di, opacityMul);
           }
+        }
+        ctx.putImageData(imageData, 0, 0);
+      };
+
+      if (texture === 'none') {
+        drawSolidFill();
+        return;
+      }
+
+      // Offscreen texture buffer in device pixels
+      const off = document.createElement('canvas');
+      off.width = bboxW; off.height = bboxH;
+      const octx = off.getContext('2d');
+      if (!octx) { drawSolidFill(); return; }
+
+      // Common helpers for textured fill
+      const rand = Math.random;
+      const drawDot = (xPx: number, yPx: number, rPx: number, a: number) => {
+        if (rPx <= 0) return;
+        octx.globalAlpha = Math.max(0, Math.min(1, a));
+        octx.fillStyle = activeColor;
+        octx.beginPath();
+        octx.arc(xPx + 0.5, yPx + 0.5, rPx, 0, Math.PI * 2);
+        octx.fill();
+      };
+
+      // 1) Charcoal: scatter grains and soft halos inside mask
+      const fillCharcoal = () => {
+        const area = bboxW * bboxH;
+        const density = Math.max(600, Math.min(8000, Math.floor(area / 140))); // tuned for 480x640
+        const grains = Math.floor(density * (0.6 + 0.8 * (brushPreset?.density ?? 1)));
+        const maxR = Math.max(1, Math.floor(baseSize * 0.22));
+        for (let g = 0; g < grains; g++) {
+          const rx = minX + Math.floor(rand() * bboxW);
+          const ry = minY + Math.floor(rand() * bboxH);
+          if (!mask[ry * w + rx]) continue;
+          const rr = Math.max(1, Math.floor(0.5 + rand() * maxR));
+          const edge = rr / (maxR + 0.0001);
+          const falloff = 1 - edge * edge;
+          const a = (brushPreset?.opacity ?? 0.65) * (0.25 + 0.55 * rand()) * falloff * opacityMul;
+          drawDot(rx - minX, ry - minY, rr, a);
+          if (rand() < 0.06) {
+            octx.globalAlpha = a * 0.22;
+            octx.beginPath();
+            octx.arc(rx - minX + 0.5, ry - minY + 0.5, rr * (2 + rand() * 2), 0, Math.PI * 2);
+            octx.fill();
+          }
+        }
+        octx.globalAlpha = 1;
+      };
+
+      // 2) Marker: multiple parallel strokes with slight jitter, clipped to mask
+      const fillMarker = () => {
+        const passes = 3;
+        const widthPx = Math.max(2, Math.floor(baseSize * 0.85));
+        for (let p = 0; p < passes; p++) {
+          const offset = Math.floor(((p - (passes - 1) / 2) / (passes)) * (widthPx * 0.5));
+          for (let y0 = 0; y0 < bboxH; y0++) {
+            const yy = y0 + offset;
+            if (yy < 0 || yy >= bboxH) continue;
+            // scan segments where mask is on for this scanline
+            let x = 0;
+            while (x < bboxW) {
+              // advance to start of mask
+              while (x < bboxW && !mask[(minY + yy) * w + (minX + x)]) x++;
+              if (x >= bboxW) break;
+              const start = x;
+              while (x < bboxW && mask[(minY + yy) * w + (minX + x)]) x++;
+              const end = x;
+              octx.globalAlpha = opacityMul * (0.55 + 0.25 * rand());
+              octx.strokeStyle = activeColor;
+              octx.lineCap = 'round';
+              octx.lineJoin = 'round';
+              octx.lineWidth = Math.max(2, widthPx * (0.92 + rand() * 0.1));
+              octx.beginPath();
+              // small perpendicular jitter
+              const j = Math.floor((rand() - 0.5) * Math.max(1, widthPx * 0.15));
+              octx.moveTo(start, yy + j);
+              octx.lineTo(end, yy + j);
+              octx.stroke();
+            }
+          }
+        }
+        octx.globalAlpha = 1;
+      };
+
+      // 3) Pencil/Rough: fine grains with subtle randomness
+      const fillPencil = () => {
+        const area = bboxW * bboxH;
+        // fewer grains than charcoal
+        const grains = Math.max(500, Math.min(5000, Math.floor(area / 260)));
+        for (let g = 0; g < grains; g++) {
+          const rx = minX + Math.floor(rand() * bboxW);
+          const ry = minY + Math.floor(rand() * bboxH);
+          if (!mask[ry * w + rx]) continue;
+          const rr = Math.max(0.5, baseSize * (0.06 + rand() * 0.12));
+          const a = opacityMul * (0.20 + 0.55 * rand());
+          drawDot(rx - minX, ry - minY, rr, a);
+        }
+        octx.globalAlpha = 1;
+      };
+
+      switch (texture) {
+        case 'charcoal':
+          fillCharcoal();
+          break;
+        case 'marker':
+          fillMarker();
+          break;
+        case 'pencil':
+        case 'rough':
+          fillPencil();
+          break;
+        default:
+          drawSolidFill();
+          return;
+      }
+
+      // Composite offscreen texture onto main imageData (device px) using alpha blend per pixel
+      const tex = octx.getImageData(0, 0, bboxW, bboxH);
+      const tdata = tex.data;
+      // Blend texture over existing pixels only where mask is set
+      for (let y0 = 0; y0 < bboxH; y0++) {
+        let m = (minY + y0) * w + minX;
+        let di = m * 4;
+        let ti = y0 * bboxW * 4;
+        for (let x0 = 0; x0 < bboxW; x0++, m++, di += 4, ti += 4) {
+          if (!mask[m]) continue;
+          const a = (tdata[ti + 3] || 0) / 255;
+          if (a <= 0) continue;
+          blendPixel(di, a);
         }
       }
       ctx.putImageData(imageData, 0, 0);
@@ -430,10 +565,12 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
       const buttons = e.buttons;
 
       // Fill tool: perform on primary click with mouse/pen. Touch remains pan-only by design.
-    if (tool === 'fill' && e.pointerType !== 'touch') {
+  if (tool === 'fill' && e.pointerType !== 'touch') {
         if ((e.pointerType === 'mouse' && (buttons & 1)) || (e.pointerType === 'pen' && (buttons & 1))) {
       onBeforeMutate?.();
-          floodFill(pos.x, pos.y);
+      floodFill(pos.x, pos.y);
+      // Mark dirty after fill to persist
+      onDirty?.();
           return; // no drawing state, single action
         }
       }
@@ -494,10 +631,12 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
         ctx.save();
         ctx.setTransform(1,0,0,1,0,0);
         ctx.scale(dpr, dpr);
-        ctx.clearRect(0,0,logicalW,logicalH);
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0,0,logicalW,logicalH);
-        ctx.drawImage(img, 0, 0, logicalW, logicalH);
+    // Always paint a solid white underlay to avoid transparent regions when restoring
+    ctx.clearRect(0,0,logicalW,logicalH);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0,0,logicalW,logicalH);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.drawImage(img, 0, 0, logicalW, logicalH);
         ctx.restore();
         restoredRef.current = true;
       };
@@ -529,11 +668,12 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
         if (penActionRef.current === 'erase') {
           const ctx = canvasRef.current?.getContext('2d');
           if (ctx) {
+            // Preserve opaque white base by painting with white instead of punching transparency
             ctx.save();
-            ctx.globalCompositeOperation = 'destination-out';
+            ctx.globalCompositeOperation = 'source-over';
             ctx.lineCap = 'round';
             ctx.lineJoin = 'round';
-            ctx.strokeStyle = 'rgba(0,0,0,1)';
+            ctx.strokeStyle = '#ffffff';
             ctx.lineWidth = brushSize;
             ctx.beginPath();
             ctx.moveTo(lastPointRef.current.x, lastPointRef.current.y);

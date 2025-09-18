@@ -130,7 +130,7 @@ const RootApp: React.FC = () => {
             </div>
           </div>
         )}
-  {currentView==='gallery' && <FrameGallery frames={frames} initialVotes={initialVotes} />}
+  {currentView==='gallery' && <FrameGallery frames={frames} initialVotes={initialVotes} activeBrushIds={['ink','pencil','marker','charcoal']} />}
         {currentView==='video' && <VideoPlayer frames={frames} />}
         {currentView==='voting' && <PaletteVoting />}
         {currentView==='chat' && (
