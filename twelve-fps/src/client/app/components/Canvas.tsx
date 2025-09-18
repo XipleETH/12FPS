@@ -16,8 +16,8 @@ interface CanvasProps {
 	onionOpacity?: number; // 0..1
 }
 
-const FIXED_WIDTH = 540; // Logical drawing width
-const FIXED_HEIGHT = 960; // Logical drawing height
+const FIXED_WIDTH = 480; // Logical drawing width
+const FIXED_HEIGHT = 640; // Logical drawing height
 
 export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
 	({ activeColor, brushSize, isDrawing, setIsDrawing, disabled, brushMode = 'solid', brushPreset, tool = 'draw', onBeforeMutate, zoom: controlledZoom, onionImage, onionOpacity = 0.4 }, ref) => {

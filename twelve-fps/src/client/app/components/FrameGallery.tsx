@@ -99,7 +99,7 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, initialVotes
               {modFrames.map(mf=>{
                 return (
                   <div key={mf.key} className="bg-white/5 border border-white/10 rounded-lg overflow-hidden">
-                    <div className="aspect-[540/740] bg-black/40">
+                    <div className="aspect-[480/640] bg-black/40">
                       <img src={mf.url} alt={mf.key} className="w-full h-full object-contain" />
                     </div>
                     <div className="p-2">
@@ -151,7 +151,7 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, initialVotes
                   const canVote = typeof key === 'string' && key.includes('/');
                   return (
                     <div key={key} className="bg-white/10 backdrop-blur-sm rounded-xl overflow-hidden border border-white/10 hover:bg-white/20 transition-colors duration-200">
-                      <div className="relative aspect-[540/740] bg-black/40 flex items-center justify-center">
+                      <div className="relative aspect-[480/640] bg-black/40 flex items-center justify-center">
                         <img src={imgSrc} alt={`Frame ${index+1}`} className="w-full h-full object-contain" loading="lazy" />
                       </div>
                       <div className="p-2">

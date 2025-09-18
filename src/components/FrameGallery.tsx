@@ -109,7 +109,7 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
                 <div
                   className="relative bg-white/10 backdrop-blur-sm rounded-2xl overflow-hidden border border-yellow-400/40 hover:bg-white/20 transition-all duration-300"
                 >
-                  <div className="relative aspect-[540/740] bg-black/40 flex items-center justify-center">
+                  <div className="relative aspect-[480/640] bg-black/40 flex items-center justify-center">
                     <img
                       src={pendingFrame.imageData}
                       alt="Pending frame"
@@ -163,7 +163,7 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
                         key={key}
                         className="bg-white/10 backdrop-blur-sm rounded-xl overflow-hidden border border-white/10 hover:bg-white/20 transition-colors duration-200"
                       >
-                        <div className="relative aspect-[540/740] bg-black/40 flex items-center justify-center">
+                        <div className="relative aspect-[480/640] bg-black/40 flex items-center justify-center">
                           <img src={frame.imageData} alt={`Frame ${index+1}`} className="w-full h-full object-contain" loading="lazy" />
                         </div>
                         <div className="p-2">

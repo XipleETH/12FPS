@@ -107,7 +107,7 @@ const RootApp: React.FC = () => {
                     </div>
                   </div>
                 )}
-                <div className="inline-block rounded-xl border border-white/20 bg-white/10 backdrop-blur-sm" style={{ width: 540, height: 960 }}>
+                <div className="inline-block rounded-xl border border-white/20 bg-white/10 backdrop-blur-sm" style={{ width: 480, height: 640 }}>
                   <Canvas ref={canvasRef} activeColor={activeColor} brushSize={brushSize} isDrawing={isDrawing} setIsDrawing={setIsDrawing} disabled={!isSessionActive || timeLeft===0} brushMode={brushMode} brushPreset={currentPreset as any} tool={tool} onBeforeMutate={snapshotCanvas} zoom={zoom} onionImage={frames.length? frames[frames.length-1]!.imageData : undefined} onionOpacity={onionOpacity} />
                 </div>
                 {paletteSide==='left' && (

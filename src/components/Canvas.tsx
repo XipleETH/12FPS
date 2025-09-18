@@ -25,8 +25,8 @@ interface CanvasProps {
 }
 
 // Default fallback size (desktop)
-const DEFAULT_WIDTH = 540;
-const DEFAULT_HEIGHT = 740;
+const DEFAULT_WIDTH = 480;
+const DEFAULT_HEIGHT = 640;
 
 export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
   ({ activeColor, brushSize, isDrawing, setIsDrawing, disabled, brushPreset, tool = 'draw', onBeforeMutate, zoom: controlledZoom, onionImage, onionOpacity = 0.4, onDirty, restoreImage }, ref) => {
