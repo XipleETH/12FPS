@@ -65,8 +65,8 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, initialVotes
   if (frames.length === 0) return (
     <div className="text-center py-12">
       <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-8 border border-white/20 max-w-md mx-auto">
-        <h3 className="text-xl font-bold text-white mb-3">No Frames Yet</h3>
-        <p className="text-white/70 mb-4 text-sm">Start drawing to create your first frame and contribute!</p>
+  <h3 className="text-xl font-bold text-white mb-3">No frames yet</h3>
+  <p className="text-white/70 mb-4 text-sm">Start drawing to create your first frame and contribute to the collaborative video.</p>
         <div className="w-16 h-16 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full mx-auto opacity-20" />
       </div>
     </div>
@@ -121,7 +121,7 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, initialVotes
       )}
       <div className="text-center">
         <h2 className="text-3xl font-bold text-white mb-1">Frame Gallery</h2>
-        <p className="text-white/60 text-xs">{frames.length} frames publicados</p>
+        <p className="text-white/60 text-xs">{frames.length} frames published</p>
       </div>
       {grouped.map(([week, list])=>{
         const sorted = [...list].sort((a,b)=>a.timestamp-b.timestamp);
@@ -136,7 +136,30 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, initialVotes
                 <div className={`w-5 h-5 rounded-sm flex items-center justify-center text-[10px] font-bold tracking-wide ${openWeeks[week] ? 'bg-green-500/70 text-black':'bg-white/15 text-white/70'} transition-colors`}>
                   {openWeeks[week] ? '-' : '+'}
                 </div>
-                <h3 className="text-white/90 font-semibold text-sm tracking-wide uppercase">Semana {week}</h3>
+                <h3 className="text-white/90 font-semibold text-sm tracking-wide uppercase">Week {week}</h3>
+                <div className="hidden sm:flex items-center gap-2 ml-2">
+                  {(() => {
+                    const weeklyPalettes: string[][] = [
+                      ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD'],
+                      ['#E17055', '#FDCB6E', '#6C5CE7', '#A29BFE', '#FD79A8', '#E84393'],
+                      ['#00CEC9', '#55A3FF', '#FDCB6E', '#E17055', '#A29BFE', '#FD79A8']
+                    ];
+                    const themes = ['Anime Inking', 'Retro Comic', 'Soft Watercolor'];
+                    const palette = weeklyPalettes[week % weeklyPalettes.length] || weeklyPalettes[0];
+                    const theme = themes[week % themes.length] || themes[0];
+                    const selectedBrush = 'Ink';
+                    return (
+                      <>
+                        <div className="flex items-center gap-1">
+                          {(palette ?? []).slice(0,6).map((c, i)=> (
+                            <span key={i} className="w-3 h-3 rounded-sm border border-white/30" style={{ backgroundColor: c }} />
+                          ))}
+                        </div>
+                        <span className="text-white/60 text-[10px]">Theme: {theme} • Brush: {selectedBrush}</span>
+                      </>
+                    );
+                  })()}
+                </div>
               </div>
               <span className="text-white/40 text-[10px]">{sorted.length} frames</span>
             </button>

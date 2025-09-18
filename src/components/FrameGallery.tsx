@@ -71,10 +71,8 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
     return (
       <div className="text-center py-16">
         <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-12 border border-white/20 max-w-md mx-auto">
-          <h3 className="text-2xl font-bold text-white mb-4">No Frames Yet</h3>
-          <p className="text-white/70 mb-6">
-            Start drawing to create your first frame and contribute to the collaborative video!
-          </p>
+          <h3 className="text-2xl font-bold text-white mb-4">No frames yet</h3>
+          <p className="text-white/70 mb-6">Start drawing to create your first frame and contribute to the collaborative video.</p>
           <div className="w-24 h-24 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full mx-auto opacity-20" />
         </div>
       </div>
@@ -97,14 +95,14 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
         <div className="text-center">
           <h2 className="text-4xl font-bold text-white mb-2">Frame Gallery</h2>
           <p className="text-white/70 text-sm sm:text-base">
-            {frames.length} frames publicados{showPending ? ' • 1 en progreso' : ''}
+            {frames.length} frames published{showPending ? ' • 1 in progress' : ''}
           </p>
         </div>
 
   {showPending && pendingFrame && (
           <div className="max-w-[1580px] mx-auto px-2">
               <div className="mb-4">
-              <h3 className="text-white/80 text-sm font-semibold mb-1 tracking-wide uppercase">Pendiente</h3>
+              <h3 className="text-white/80 text-sm font-semibold mb-1 tracking-wide uppercase">Pending</h3>
               <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-6 gap-3">
                 <div
                   className="relative bg-white/10 backdrop-blur-sm rounded-2xl overflow-hidden border border-yellow-400/40 hover:bg-white/20 transition-all duration-300"
@@ -117,13 +115,13 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
                       loading="lazy"
                     />
                     <div className="absolute top-2 left-2 bg-yellow-500/80 text-black text-xs font-bold px-2 py-1 rounded">
-                      En progreso
+                      In progress
                     </div>
                   </div>
                   <div className="p-2">
                     <div className="flex items-center justify-between mb-0.5">
-                      <span className="text-white font-semibold text-[10px]">(día)</span>
-                      <span className="text-white/60 text-[10px]">No publicado</span>
+                      <span className="text-white font-semibold text-[10px]">(day)</span>
+                      <span className="text-white/60 text-[10px]">Not published</span>
                     </div>
                     <div className="flex items-center space-x-1.5 text-white/70 text-[10px]">
                       <Calendar className="w-3 h-3" />
@@ -136,8 +134,18 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
           </div>
         )}
 
+  {/* Week meta helpers (palette/theme/brushes). Keep in sync with App weekly palettes. */}
   {grouped.map(([week, list])=>{
           const sorted = [...list].sort((a,b)=>a.timestamp-b.timestamp);
+          const weeklyPalettes: string[][] = [
+            ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD'],
+            ['#E17055', '#FDCB6E', '#6C5CE7', '#A29BFE', '#FD79A8', '#E84393'],
+            ['#00CEC9', '#55A3FF', '#FDCB6E', '#E17055', '#A29BFE', '#FD79A8']
+          ];
+          const themes = ['Anime Inking', 'Retro Comic', 'Soft Watercolor'];
+          const palette = weeklyPalettes[week % weeklyPalettes.length] || weeklyPalettes[0];
+          const theme = themes[week % themes.length] || themes[0];
+          const selectedBrush = 'Ink'; // Week 1 used brush we have
           return (
             <div key={week} className="space-y-1 max-w-[1580px] mx-auto px-2">
               <button
@@ -149,7 +157,15 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
                   <div className={`w-5 h-5 rounded-sm flex items-center justify-center text-[10px] font-bold tracking-wide ${openWeeks[week] ? 'bg-green-500/70 text-black':'bg-white/15 text-white/70'} transition-colors`}>
                     {openWeeks[week] ? '-' : '+'}
                   </div>
-                  <h3 className="text-white/90 font-semibold text-sm tracking-wide uppercase">Semana {week}</h3>
+                  <h3 className="text-white/90 font-semibold text-sm tracking-wide uppercase">Week {week}</h3>
+                  <div className="hidden sm:flex items-center gap-2 ml-2">
+                    <div className="flex items-center gap-1">
+                      {palette.slice(0,6).map((c, i)=> (
+                        <span key={i} className="w-3 h-3 rounded-sm border border-white/30" style={{ backgroundColor: c }} />
+                      ))}
+                    </div>
+                    <span className="text-white/60 text-[10px]">Theme: {theme} • Brush: {selectedBrush}</span>
+                  </div>
                 </div>
                 <span className="text-white/40 text-[10px]">{sorted.length} frames</span>
               </button>

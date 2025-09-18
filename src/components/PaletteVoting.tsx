@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { Vote, TrendingUp, Users, Brush, RefreshCw, Clock } from 'lucide-react';
+import { Vote, TrendingUp, Users, RefreshCw, Clock } from 'lucide-react';
+import { allBrushPresets } from '../brushes';
 
 interface PaletteVotingProps {}
 
@@ -21,7 +22,7 @@ interface VotingStats {
 }
 
 export const PaletteVoting: React.FC<PaletteVotingProps> = () => {
-  type SubPage = 'palettes' | 'themes' | 'modes';
+  type SubPage = 'palettes' | 'themes' | 'brushes';
   const [subPage, setSubPage] = useState<SubPage>('palettes');
   
   // Real data from Reddit/Devvit
@@ -73,8 +74,8 @@ export const PaletteVoting: React.FC<PaletteVotingProps> = () => {
   useEffect(() => {
     const parse = () => {
       const h = window.location.hash.toLowerCase();
-      if (h.includes('/voting/themes')) setSubPage('themes');
-      else if (h.includes('/voting/modes')) setSubPage('modes');
+  if (h.includes('/voting/themes')) setSubPage('themes');
+  else if (h.includes('/voting/brushes')) setSubPage('brushes');
       else setSubPage('palettes');
     };
     parse();
@@ -84,7 +85,7 @@ export const PaletteVoting: React.FC<PaletteVotingProps> = () => {
   }, []);
 
   const go = (sp: SubPage) => {
-    const path = sp === 'palettes' ? '#/voting/palettes' : sp === 'themes' ? '#/voting/themes' : '#/voting/modes';
+  const path = sp === 'palettes' ? '#/voting/palettes' : sp === 'themes' ? '#/voting/themes' : '#/voting/brushes';
     window.location.hash = path;
     setSubPage(sp);
   };
@@ -92,7 +93,7 @@ export const PaletteVoting: React.FC<PaletteVotingProps> = () => {
   // Filter proposals by type
   const paletteProposals = proposals.filter(p => p.type === 'palette');
   const themeProposals = proposals.filter(p => p.type === 'theme');
-  const brushKitProposals = proposals.filter(p => p.type === 'brushKit');
+  const brushSetProposals = proposals.filter(p => p.type === 'brushKit');
 
   // Vote on a proposal
   const vote = useCallback(async (proposalId: string) => {
@@ -156,8 +157,7 @@ export const PaletteVoting: React.FC<PaletteVotingProps> = () => {
   const [newPaletteName, setNewPaletteName] = useState('');
   const [newPaletteColors, setNewPaletteColors] = useState<string[]>(['#FF6B6B','#4ECDC4','#45B7D1','#96CEB4','#FFEAA7','#DDA0DD']);
   const [newThemeTitle, setNewThemeTitle] = useState('');
-  // Solo un modo disponible actualmente: mangaPen
-  const [newModes, setNewModes] = useState<string[]>(['mangaPen']);
+  // (legacy) modes removed; we now propose concrete brush presets (max 4)
 
   const isHex = (s: string) => /^#([0-9a-fA-F]{6})$/.test(s);
   const canSubmitPalette = useMemo(() => 
@@ -167,7 +167,7 @@ export const PaletteVoting: React.FC<PaletteVotingProps> = () => {
     [newPaletteName, newPaletteColors]
   );
   const canSubmitTheme = useMemo(() => newThemeTitle.trim().length >= 3, [newThemeTitle]);
-  const canSubmitModes = useMemo(() => newModes.length === 1 && newModes[0] === 'mangaPen', [newModes]);
+  // no modes page/state
 
   // Submit handlers
   const handleSubmitPalette = async () => {
@@ -188,19 +188,21 @@ export const PaletteVoting: React.FC<PaletteVotingProps> = () => {
     }
   };
 
-  const handleSubmitModes = async () => {
-    if (!canSubmitModes) return;
-    const label = 'Manga Ink Pen';
-    const success = await submitProposal('brushKit', label, { modes: ['mangaPen'] });
-    if (success) {
-      setNewModes(['mangaPen']);
-    }
+  // Brush proposals (choose up to 4 existing brushes)
+  const [selectedBrushIds, setSelectedBrushIds] = useState<string[]>([]);
+  const canSubmitBrushes = useMemo(() => selectedBrushIds.length > 0 && selectedBrushIds.length <= 4, [selectedBrushIds]);
+  const handleToggleBrush = (id: string) => {
+    setSelectedBrushIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : (prev.length < 4 ? [...prev, id] : prev));
+  };
+  const handleSubmitBrushes = async () => {
+    if (!canSubmitBrushes) return;
+    const names = allBrushPresets.filter(b => selectedBrushIds.includes(b.id)).map(b => b.name);
+    const title = names.join(' + ');
+  const ok = await submitProposal('brushKit', title, { ids: selectedBrushIds, names });
+    if (ok) setSelectedBrushIds([]);
   };
 
-  // Mode badge component
-  const ModeBadge: React.FC = () => (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/10 border border-white/20 text-white/80 text-[10px]"><Brush className="w-3.5 h-3.5" />Manga Pen</span>
-  );
+  // no mode badge
 
   // Check if user has voted
   const hasUserVoted = (proposal: Proposal) => {
@@ -230,7 +232,7 @@ export const PaletteVoting: React.FC<PaletteVotingProps> = () => {
         {([
           {key:'palettes', label:'Palettes', count: paletteProposals.length},
           {key:'themes', label:'Themes', count: themeProposals.length},
-          {key:'modes', label:'Brush Kits', count: brushKitProposals.length}
+          {key:'brushes', label:'Brushes', count: brushSetProposals.length}
         ] as Array<{key: SubPage; label: string; count: number}>).map(t => (
           <button
             key={t.key}
@@ -409,59 +411,64 @@ export const PaletteVoting: React.FC<PaletteVotingProps> = () => {
         </>
       )}
 
-      {/* Modes page */}
-      {subPage === 'modes' && (
+      {/* Brushes page */}
+      {subPage === 'brushes' && (
         <>
           <section className="bg-white/10 backdrop-blur-sm rounded-2xl p-5 md:p-6 border border-white/20">
-            <h3 className="text-xl font-bold text-white mb-4">Propose brush kit</h3>
-            <div className="flex flex-wrap items-center gap-3 mb-3">
-              <label className="flex items-center gap-2 px-2 py-1 rounded-lg border bg-white/20 border-white/50 text-white cursor-not-allowed">
-                <input type="checkbox" className="accent-white" checked readOnly />
-                <ModeBadge />
-              </label>
+            <h3 className="text-xl font-bold text-white mb-4">Propose brushes (max 4)</h3>
+            <div className="flex flex-wrap gap-2 mb-3">
+              {allBrushPresets.map(b => {
+                const checked = selectedBrushIds.includes(b.id);
+                const disabledChoice = !checked && selectedBrushIds.length >= 4;
+                return (
+                  <label key={b.id} className={`flex items-center gap-2 px-2 py-1 rounded-lg border ${checked ? 'bg-white/20 border-white/50 text-white' : disabledChoice ? 'bg-white/5 border-white/10 text-white/30' : 'bg-white/10 border-white/20 text-white/70 hover:bg-white/15'}`}>
+                    <input type="checkbox" className="accent-white" checked={checked} onChange={() => handleToggleBrush(b.id)} disabled={disabledChoice} />
+                    <span className="text-xs">{b.name}</span>
+                  </label>
+                );
+              })}
             </div>
             <button 
-              disabled={!canSubmitModes || submitting} 
-              onClick={handleSubmitModes} 
-              className={`px-4 py-2 rounded-lg font-semibold ${canSubmitModes && !submitting ? 'bg-emerald-500 hover:bg-emerald-600 text-white':'bg-white/10 text-white/50 cursor-not-allowed'}`}
+              disabled={!canSubmitBrushes || submitting} 
+              onClick={handleSubmitBrushes} 
+              className={`px-4 py-2 rounded-lg font-semibold ${canSubmitBrushes && !submitting ? 'bg-emerald-500 hover:bg-emerald-600 text-white':'bg-white/10 text-white/50 cursor-not-allowed'}`}
             >
               {submitting ? 'Submitting...' : 'Submit'}
             </button>
           </section>
-          
           <section>
-            <h3 className="text-xl font-bold text-white mb-3">Proposed brush kits</h3>
-            {brushKitProposals.length === 0 ? (
+            <h3 className="text-xl font-bold text-white mb-3">Proposed brush sets</h3>
+            {brushSetProposals.length === 0 ? (
               <div className="text-center py-8 text-white/60">
-                <p>No brush kit proposals yet. Be the first to propose one!</p>
+                <p>No brush proposals yet. Be the first to propose a set!</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 md:gap-8">
-                {brushKitProposals.map(kit => {
-                  const voted = hasUserVoted(kit);
+                {brushSetProposals.map(setp => {
+                  const voted = hasUserVoted(setp);
+                  const ids: string[] = Array.isArray(setp.data) ? setp.data : (setp.data?.ids || []);
+                  const names: string[] = (setp.data?.names || ids.map(id => allBrushPresets.find(b=>b.id===id)?.name || id));
                   return (
-                    <div key={kit.id} className="bg-white/10 backdrop-blur-sm rounded-2xl p-6 border border-white/20 hover:bg-white/15 transition-all duration-300">
-                      <div className="flex justify-between items-start mb-4">
+                    <div key={setp.id} className="bg-white/10 backdrop-blur-sm rounded-2xl p-6 border border-white/20 hover:bg-white/15 transition-all duration-300">
+                      <div className="flex justify-between items-start mb-3">
                         <div>
-                          <h4 className="text-lg font-bold text-white mb-1">{kit.title}</h4>
-                          <div className="flex items-center gap-1 flex-wrap mb-1"><ModeBadge /></div>
-                          <div className="flex items-center space-x-2 text-white/70 text-sm">
-                            <Users className="w-3 h-3" />
-                            <span>by u/{kit.proposedBy}</span>
-                          </div>
+                          <h4 className="text-lg font-bold text-white mb-1">{setp.title}</h4>
+                          <div className="flex items-center space-x-2 text-white/70 text-sm"><Users className="w-3 h-3" /><span>by u/{setp.proposedBy}</span></div>
                         </div>
-                        <div className="flex items-center space-x-2">
-                          <TrendingUp className="w-4 h-4 text-green-400" />
-                          <span className="text-white font-semibold">{kit.votes}</span>
-                        </div>
+                        <div className="flex items-center space-x-2"><TrendingUp className="w-4 h-4 text-green-400" /><span className="text-white font-semibold">{setp.votes}</span></div>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 mb-4">
+                        {names.map((n, i)=> (
+                          <span key={i} className="px-2 py-0.5 rounded-full bg-white/10 border border-white/20 text-white/80 text-[10px]">{n}</span>
+                        ))}
                       </div>
                       <button 
-                        onClick={() => vote(kit.id)} 
+                        onClick={() => vote(setp.id)} 
                         disabled={!currentUser}
                         className={`w-full flex items-center justify-center gap-2 py-3 px-4 rounded-lg transition-all ${voted ? 'bg-green-500 hover:bg-green-600 text-white':'bg-white/10 hover:bg-white/20 text-white border border-white/20'} ${!currentUser ? 'opacity-50 cursor-not-allowed' : ''}`}
                       >
                         <Vote className="w-4 h-4" />
-                        <span className="font-semibold">{voted ? 'Voted!' : 'Vote for this kit'}</span>
+                        <span className="font-semibold">{voted ? 'Voted!' : 'Vote for this set'}</span>
                       </button>
                     </div>
                   );

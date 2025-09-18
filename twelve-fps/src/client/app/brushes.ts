@@ -19,8 +19,17 @@ export interface BrushPreset {
 }
 
 export const brushKits: Record<BrushStyle, BrushPreset[]> = {
-	anime: [],
-	comic: [],
-	watercolor: [],
+	anime: [
+		{ id: 'ink', name: 'Ink', engine: 'solid', size: 6, opacity: 1, taper: 0.65, jitter: 0.02, texture: 'none' },
+	],
+	comic: [
+		{ id: 'marker', name: 'Marker', engine: 'solid', size: 9, opacity: 0.9, taper: 0.2, jitter: 0.01, texture: 'marker' },
+		{ id: 'charcoal', name: 'Charcoal', engine: 'soft', size: 12, opacity: 0.65, taper: 0.15, jitter: 0.12, hardness: 0.4, texture: 'rough' },
+	],
+	watercolor: [
+		{ id: 'pencil', name: 'Pencil', engine: 'soft', size: 8, opacity: 0.55, taper: 0.2, jitter: 0.08, hardness: 0.6, texture: 'rough' },
+	],
 	graffiti: [],
 };
+
+export const allBrushPresets = Object.values(brushKits).flat();

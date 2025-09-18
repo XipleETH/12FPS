@@ -54,6 +54,8 @@ interface SidePanelsProps {
   // Brush preset control
   brushPresetId?: string;
   setBrushPresetId?: (id: string) => void;
+  // Allowed brushes gating (winners)
+  allowedBrushIds?: string[];
 }
 
 const PanelWrapper: React.FC<{
@@ -110,6 +112,7 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
   currentArtist,
   brushPresetId,
   setBrushPresetId,
+  allowedBrushIds,
 }) => {
   const move = (key: PanelKey, dir: -1 | 1) => {
     const idx = order.indexOf(key);
@@ -233,8 +236,10 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
       );
     }
     if (key === 'brushMode') {
-  // Incluir ink, pencil, marker y charcoal
-  const presets: BrushPreset[] = allBrushPresets.filter(p => ['ink','pencil','marker','charcoal'].includes(p.id));
+  // Allowed winners or default four (ink, pencil, marker, charcoal)
+  const defaultIds = ['ink','pencil','marker','charcoal'];
+  const ids = (allowedBrushIds && allowedBrushIds.length > 0 ? allowedBrushIds : defaultIds).slice(0,4);
+  const presets: BrushPreset[] = allBrushPresets.filter(p => ids.includes(p.id));
       const InkIcon = ({ active }: { active: boolean }) => (
         <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="white" fill="none" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
           <path d="M5 19c4-1 7-4 9-8 1-2 2-4 2-6" />
