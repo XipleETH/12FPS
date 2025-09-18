@@ -81,7 +81,7 @@ const RootApp: React.FC = () => {
   const snapshotCanvas=()=>{ if(!canvasRef.current) return; const ctx=canvasRef.current.getContext('2d'); if(!ctx) return; const img=ctx.getImageData(0,0,canvasRef.current.width, canvasRef.current.height); setUndoStack(prev=>{ const next=prev.slice(-24); next.push(img); return next; }); };
   const undo=()=>{ if(!canvasRef.current||undoStack.length===0) return; const ctx=canvasRef.current.getContext('2d'); if(!ctx) return; const prev=undoStack[undoStack.length-1]; if(!prev) return; setUndoStack(undoStack.slice(0,-1)); ctx.putImageData(prev,0,0); };
   return (
-    <div className={`min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-violet-900 ${isEmbedded?'embedded-mode':''}`}>
+  <div className={`min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-violet-900 ${isEmbedded?'embedded-mode':''}`}>
       {isEmbedded && <div className="bg-orange-500/90 text-white text-xs px-3 py-1 text-center font-medium">Running inside Reddit WebView</div>}
       <div className="max-w-6xl mx-auto px-3 py-4">
         <AppHeader currentView={currentView} setCurrentView={setCurrentView} />

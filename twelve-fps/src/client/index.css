@@ -4,3 +4,5 @@
 html, body { height: 100%; overscroll-behavior: none; -webkit-overflow-scrolling: auto; touch-action: manipulation; }
 #root { min-height: 100%; }
 body { font-family: system-ui, sans-serif; }
+/* Offset content for fixed 60px sidebar */
+body { padding-left: 60px; }

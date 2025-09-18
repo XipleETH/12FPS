@@ -19,3 +19,8 @@ html, body {
 	aspect-ratio: 540 / 740;
 	position: relative;
 }
+
+/* Ensure content starts to the right of the fixed 60px sidebar */
+body {
+	padding-left: 60px;
+}
