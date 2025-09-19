@@ -1,6 +1,8 @@
 import express from 'express';
 import { InitResponse, IncrementResponse, DecrementResponse } from '../shared/types/api';
-import { redis, reddit, createServer, context, getServerPort } from '@devvit/web/server';
+// Import redis + reddit + server helpers from web bundle, but context now comes from '@devvit/server'
+import { redis, reddit, createServer, getServerPort } from '@devvit/web/server';
+import { context } from '@devvit/server';
 import { createPost } from './core/post';
 import crypto from 'node:crypto';
 
