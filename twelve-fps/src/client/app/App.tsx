@@ -464,9 +464,9 @@ function App() {
       {/* Aside de navegación fijo */}
       <Header currentView={currentView} setCurrentView={setCurrentView} />
 
-      {/* Contenedor principal desplazado para no quedar bajo el aside (60px) */}
-      <div className="pl-[60px] md:pl-[64px] pb-4">
-        <div className="mx-auto w-full max-w-[1500px] px-3">
+  {/* El body ya no tiene padding; este wrapper desplaza el contenido a la derecha del header fijo */}
+  <div className="pl-[60px] md:pl-[60px] pb-4">
+    <div className="mx-auto w-full max-w-[1500px] px-4">
           {currentView === 'draw' && (
             <div className="w-full">
               <div className="flex flex-col lg:flex-row gap-6 items-start justify-center">

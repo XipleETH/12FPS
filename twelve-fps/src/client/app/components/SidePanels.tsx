@@ -67,23 +67,24 @@ const PanelWrapper: React.FC<{
   onUp: () => void;
   onDown: () => void;
   children: React.ReactNode;
-}> = ({ title, side, onToggleSide, canUp, canDown, onUp, onDown, children }) => (
-  <div className="bg-white/12 backdrop-blur-xl border border-white/20 rounded-xl shadow-md overflow-hidden flex flex-col">
-    <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-white/10">
-      <span className="text-white/90 text-[10px] font-semibold tracking-wide flex items-center gap-1">{title}</span>
-      <div className="flex items-center gap-0.5">
-        <button onClick={onUp} disabled={!canUp} className="p-1 rounded-md bg-white/10 hover:bg-white/25 disabled:opacity-30 text-white" aria-label="Mover arriba">
+  extraWidth?: number;
+}> = ({ title, side, onToggleSide, canUp, canDown, onUp, onDown, children, extraWidth }) => (
+  <div className="bg-white/12 backdrop-blur-xl border border-white/20 rounded-xl shadow-md overflow-hidden flex flex-col min-w-0" style={extraWidth ? { width: extraWidth } : undefined}>
+    <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
+      <span className="text-white/90 text-[10px] font-semibold tracking-wide flex items-center gap-1 leading-none">{title}</span>
+      <div className="flex items-center gap-1">
+        <button onClick={onUp} disabled={!canUp} className="w-7 h-7 flex items-center justify-center rounded-md bg-white/10 hover:bg-white/25 disabled:opacity-30 text-white" aria-label="Mover arriba">
           <MoveUp className="w-3 h-3" />
         </button>
-        <button onClick={onDown} disabled={!canDown} className="p-1 rounded-md bg-white/10 hover:bg-white/25 disabled:opacity-30 text-white" aria-label="Mover abajo">
+        <button onClick={onDown} disabled={!canDown} className="w-7 h-7 flex items-center justify-center rounded-md bg-white/10 hover:bg-white/25 disabled:opacity-30 text-white" aria-label="Mover abajo">
           <MoveDown className="w-3 h-3" />
         </button>
-        <button onClick={onToggleSide} className="p-1 rounded-md bg-white/10 hover:bg-white/25 text-white" aria-label="Cambiar lado" title="Cambiar lado">
+        <button onClick={onToggleSide} className="w-7 h-7 flex items-center justify-center rounded-md bg-white/10 hover:bg-white/25 text-white" aria-label="Cambiar lado" title="Cambiar lado">
           {side === 'right' ? <ChevronLeft className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
         </button>
       </div>
     </div>
-    <div className="p-2.5 flex flex-col gap-2.5">{children}</div>
+    <div className="p-3 flex flex-col gap-3">{children}</div>
   </div>
 );
 
@@ -137,9 +138,9 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
 
     if (key === 'actions') {
       return (
-        <PanelWrapper key={key} title="Actions" {...common}>
-          <div className="flex flex-col gap-2.5">
-            <div className="flex items-center justify-center gap-2.5">
+  <PanelWrapper key={key} title="Actions" {...common} extraWidth={222}>
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-center gap-3 flex-wrap">
               {(canStart || isArtist) && (
                 (() => {
                   const turnBtnDisabled = isArtist ? !!disabled : !canStart; // starting allowed even if drawing disabled
@@ -155,7 +156,7 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
                       }}
                       aria-label={isArtist ? 'Finalize Turn' : 'Start Turn'}
                       title={isArtist ? 'Finalize Turn' : 'Start Turn'}
-                      className={`p-2 rounded-full text-white transition focus:outline-none focus:ring-2 focus:ring-white/50 ${
+                      className={`w-9 h-9 flex items-center justify-center rounded-full text-white transition focus:outline-none focus:ring-2 focus:ring-white/50 ${
                         turnBtnDisabled
                           ? 'bg-blue-500/30 cursor-not-allowed'
                           : isArtist
@@ -169,18 +170,18 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
                   );
                 })()
               )}
-              <button onClick={() => !disabled && onSave()} disabled={disabled} aria-label="Save Frame" className="p-2 rounded-full bg-emerald-500/70 hover:bg-emerald-500 text-white disabled:opacity-40 transition">
+              <button onClick={() => !disabled && onSave()} disabled={disabled} aria-label="Save Frame" className="w-9 h-9 flex items-center justify-center rounded-full bg-emerald-500/70 hover:bg-emerald-500 text-white disabled:opacity-40 transition">
                 <Save className="w-4 h-4" />
               </button>
-              <button onClick={() => !disabled && onUndo?.()} disabled={disabled} aria-label="Undo" title="Undo" className="p-2 rounded-full bg-indigo-500/70 hover:bg-indigo-500 text-white disabled:opacity-40 transition">
+              <button onClick={() => !disabled && onUndo?.()} disabled={disabled} aria-label="Undo" title="Undo" className="w-9 h-9 flex items-center justify-center rounded-full bg-indigo-500/70 hover:bg-indigo-500 text-white disabled:opacity-40 transition">
                 <Undo2 className="w-4 h-4" />
               </button>
-              <button onClick={() => !disabled && onClear()} disabled={disabled} aria-label="Clear Canvas" className="p-2 rounded-full bg-red-500/70 hover:bg-red-500 text-white disabled:opacity-40 transition">
+              <button onClick={() => !disabled && onClear()} disabled={disabled} aria-label="Clear Canvas" className="w-9 h-9 flex items-center justify-center rounded-full bg-red-500/70 hover:bg-red-500 text-white disabled:opacity-40 transition">
                 <Trash2 className="w-4 h-4" />
               </button>
             </div>
             {typeof timeLeft === 'number' && (
-              <div className="flex items-center justify-center gap-2 text-white/90 text-[11px] font-mono flex-wrap">
+              <div className="flex items-center justify-center gap-2 text-white/90 text-[11px] font-mono flex-wrap leading-none">
                 <Clock className="w-4 h-4 text-white/80" />
                 <span>{new Date(timeLeft * 1000).toISOString().substring(11,19)}</span>
                 <span className="text-white/60">|
@@ -203,7 +204,7 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
                 disabled={disabled}
                 aria-label={t}
                 title={t}
-                className={`p-1.5 rounded-full border transition flex items-center justify-center ${
+                className={`w-9 h-9 rounded-full border transition flex items-center justify-center ${
                   tool === t ? 'bg-white/30 border-white/60 text-white' : 'bg-white/10 border-white/20 text-white/70 hover:bg-white/20'
                 } disabled:opacity-40`}
               >
@@ -220,13 +221,9 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
       return (
     <PanelWrapper key={key} title="Brush Size" {...common}>
           <div className="flex items-center justify-center gap-2">
-      <button onClick={() => !disabled && setBrushSize(Math.max(1, brushSize - 2))} disabled={disabled} className="px-1.5 py-0.5 text-[11px] rounded-md bg-white/15 hover:bg-white/30 text-white disabled:opacity-40">
-              -
-            </button>
-            <span className="text-white font-mono text-xs w-8 text-center select-none">{brushSize}</span>
-            <button onClick={() => !disabled && setBrushSize(Math.min(50, brushSize + 2))} disabled={disabled} className="px-1.5 py-0.5 text-[11px] rounded-md bg-white/15 hover:bg-white/30 text-white disabled:opacity-40">
-              +
-            </button>
+            <button onClick={() => !disabled && setBrushSize(Math.max(1, brushSize - 2))} disabled={disabled} className="w-7 h-7 flex items-center justify-center text-[11px] rounded-md bg-white/15 hover:bg-white/30 text-white disabled:opacity-40">-</button>
+            <span className="text-white font-mono text-xs w-10 text-center select-none">{brushSize}</span>
+            <button onClick={() => !disabled && setBrushSize(Math.min(50, brushSize + 2))} disabled={disabled} className="w-7 h-7 flex items-center justify-center text-[11px] rounded-md bg-white/15 hover:bg-white/30 text-white disabled:opacity-40">+</button>
           </div>
           <div className="flex justify-center py-1">
             <div className="rounded-full border border-white/50 shadow-sm" style={{ width: `${Math.max(8, Math.min(34, brushSize))}px`, height: `${Math.max(8, Math.min(34, brushSize))}px`, backgroundColor: activeColor, transition: 'width .15s ease, height .15s ease' }} />
@@ -242,14 +239,14 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
   const ids = (allowedBrushIds && allowedBrushIds.length > 0 ? allowedBrushIds : defaultIds).slice(0,4);
   const presets: BrushPreset[] = allBrushPresets.filter(p => ids.includes(p.id));
       const InkIcon = ({ active }: { active: boolean }) => (
-        <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="white" fill="none" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
+        <svg viewBox="0 0 24 24" className="w-4 h-4" stroke="black" fill="none" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 0.9 : 0.65 }}>
           <path d="M5 19c4-1 7-4 9-8 1-2 2-4 2-6" />
           <path d="M15 5c0 2-1.2 3.2-2.4 4.4C10.8 11.2 9 13 8 16l-.7 2.1" />
           <path d="M4 21h16" />
         </svg>
       );
       const AcrilicoIcon = ({ active }: { active: boolean }) => (
-        <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="white" fill="none" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
+        <svg viewBox="0 0 24 24" className="w-4 h-4" stroke="black" fill="none" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 0.9 : 0.65 }}>
           {/* Stylized flat brush with bristles */}
           <path d="M4 20h16" />
           <path d="M6 14h12l-1.5 4h-9z" />
@@ -257,14 +254,14 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
         </svg>
       );
       const AcuarelaIcon = ({ active }: { active: boolean }) => (
-        <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="white" fill="none" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
+        <svg viewBox="0 0 24 24" className="w-4 h-4" stroke="black" fill="none" strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 0.9 : 0.65 }}>
           {/* Droplet + soft stroke */}
           <path d="M12 3c-2.5 3-4 5.5-4 7.5A4 4 0 0 0 12 15a4 4 0 0 0 4-4.5C16 8.5 14.5 6 12 3Z" />
           <path d="M5 19c4-1.2 10-.8 14 0" />
         </svg>
       );
       const LapiceroIcon = ({ active }: { active: boolean }) => (
-        <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="white" fill="none" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
+        <svg viewBox="0 0 24 24" className="w-4 h-4" stroke="black" fill="none" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 0.9 : 0.65 }}>
           {/* Ballpoint pen silhouette */}
           <path d="M5 16 14.5 6.5a2.2 2.2 0 0 1 3 3L8 19l-4 1 1-4Z" />
           <path d="m14.5 6.5 3 3" />
@@ -272,13 +269,13 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
         </svg>
       );
       const MarkerIcon = ({ active }: { active: boolean }) => (
-        <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="white" fill="none" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
+        <svg viewBox="0 0 24 24" className="w-4 h-4" stroke="black" fill="none" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 0.9 : 0.65 }}>
           <path d="M4 20h16" />
           <path d="M7 16 15.5 4.5a2.1 2.1 0 0 1 3 2.9L11 19l-4 1 1-4Z" />
         </svg>
       );
       const CharcoalIcon = ({ active }: { active: boolean }) => (
-        <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="white" fill="none" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
+        <svg viewBox="0 0 24 24" className="w-4 h-4" stroke="black" fill="none" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 0.9 : 0.65 }}>
           <path d="M5 19c2.5-1.2 5-2.4 7.2-5.2 1.8-2.2 2.8-4.4 3.3-6.5" />
           <path d="M9 18c1.2-.6 2.4-1.3 3.5-2.4 2.4-2.3 3.8-5.3 4.3-8.1" />
           <path d="M4 21h16" />
@@ -305,11 +302,10 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
                   key={p.id}
                   disabled={disabled}
                   onClick={() => { setBrushPresetId?.(p.id); setBrushSize(p.size); }}
-          className={`flex flex-col items-center gap-0.5 px-1.5 py-1 rounded-md text-white/80 hover:text-white transition ${active ? 'bg-white/15 border border-white/40' : 'hover:bg-white/10'} disabled:opacity-40`}
+          className={`flex items-center justify-center px-1.5 py-1 rounded-md hover:bg-white/10 ${active ? 'bg-white/15 border border-white/40' : ''} disabled:opacity-40`}
                   title={p.name}
                 >
           <Icon active={active} />
-          <span className="text-[9px] leading-none font-medium tracking-wide">{p.name}</span>
                 </button>
               );
             })}
@@ -319,29 +315,49 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
     }
     return (
       <PanelWrapper key={key} title={`Palette W${currentWeek}`} {...common}>
-        <div className="grid grid-cols-3 gap-2 justify-items-center">
-          {colors.map((color) => {
-            const active = activeColor === color;
-            return (
-              <button
-                key={color}
-                onClick={() => setActiveColor(color)}
-                className={`w-8 h-8 rounded-full relative transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-white/70 shadow-sm hover:scale-110 ${active ? 'ring-4 ring-white/70 scale-110' : 'ring-2 ring-white/10'}`}
-                style={{ backgroundColor: color }}
-                title={color}
-              >
-                {active && (
-                  <span className="absolute inset-0 flex items-center justify-center">
-                    <span className="w-2 h-2 bg-white rounded-full mix-blend-overlay" />
-                  </span>
-                )}
-              </button>
-            );
-          })}
+        <div className="flex flex-col gap-2">
+          <div className="pr-1">
+            <div
+              className={
+                colors.length <= 6
+                  ? 'grid grid-cols-3 gap-2 justify-items-center'
+                  : 'grid gap-2 justify-items-center'
+              }
+              style={colors.length <= 6 ? undefined : {
+                gridTemplateColumns: `repeat(auto-fill, minmax(${colors.length > 24 ? 28 : colors.length > 12 ? 32 : 36}px, 1fr))`
+              }}
+            >
+              {colors.map((color) => {
+                const active = activeColor === color;
+                const size = colors.length <= 6 ? 42 : (colors.length > 24 ? 28 : colors.length > 12 ? 32 : 36);
+                return (
+                  <button
+                    key={color}
+                    onClick={() => setActiveColor(color)}
+                    className={`relative rounded-full transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-white/70 shadow-sm hover:scale-110 ${active ? 'ring-4 ring-white/70 scale-110' : 'ring-2 ring-white/10'}`}
+                    style={{ backgroundColor: color, width: size, height: size }}
+                    title={color}
+                  >
+                    {active && (
+                      <span className="absolute inset-0 flex items-center justify-center">
+                        <span className="w-2 h-2 bg-white rounded-full mix-blend-overlay" />
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          {colors.length > 12 && (
+            <div className="text-center text-[10px] text-white/50 font-mono tracking-wide">
+              {colors.length} colors
+            </div>
+          )}
         </div>
       </PanelWrapper>
     );
   };
 
-  return <div className={`w-44 shrink-0 flex flex-col gap-3 ${side === 'right' ? '' : ''}`}>{order.map((k, idx) => renderPanel(k, idx))}</div>;
+  // Revert global width to w-48; only Actions panel given extra width
+  return <div className={`w-48 shrink-0 flex flex-col gap-4 ${side === 'right' ? '' : ''}`}>{order.map((k, idx) => renderPanel(k, idx))}</div>;
 };

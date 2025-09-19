@@ -13,7 +13,7 @@
     "deploy": "npm run build && devvit upload",
   "dev": "concurrently -k -p '[{name}]' -n CLIENT,SERVER,DEVVIT -c blue,green,magenta \"npm run dev:client\" \"npm run dev:server\" \"npm run dev:devvit\"",
   "dev:client": "vite build --config src/client/vite.config.ts --watch",
-    "dev:devvit": "devvit playtest",
+  "dev:devvit": "devvit playtest r/12FPS",
   "dev:server": "vite build --config src/server/vite.config.ts --watch",
   "dev:vite": "vite --config src/client/vite.config.ts --port 7474",
     "lint": "eslint ./src",

@@ -54,7 +54,7 @@ export const Header: React.FC<HeaderProps> = ({ currentView, setCurrentView }) =
 
   return (
     <aside
-      className="fixed top-0 left-0 h-screen w-[56px] flex flex-col bg-black/40 backdrop-blur-md border-r border-white/10 shadow-xl z-40 overflow-hidden"
+      className="fixed top-0 left-0 h-screen w-[60px] flex flex-col bg-black/40 backdrop-blur-md border-r border-white/10 shadow-xl z-40 overflow-hidden"
     >
       <div className="flex items-center justify-center py-4 select-none border-b border-white/10">
         <div className="w-9 h-9 bg-gradient-to-tr from-purple-500 via-fuchsia-500 to-pink-500 rounded-xl flex items-center justify-center shadow-inner">
