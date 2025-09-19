@@ -17,9 +17,14 @@ export const Timer: React.FC<TimerProps> = ({ timeLeft, isActive, onStart, compa
     const secs = seconds % 60;
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
-  const getProgressPercentage = () => ((7200 - timeLeft) / 7200) * 100;
+
+  const getProgressPercentage = () => {
+    return ((7200 - timeLeft) / 7200) * 100;
+  };
+
   const baseTextColor = timeLeft < 300 && isActive ? 'text-red-400 animate-pulse' : 'text-white';
   const isVertical = orientation === 'vertical';
+
   if (compact) {
     return (
       <div className={`flex ${isVertical ? 'flex-col items-center gap-2' : 'items-center gap-3'}`}>
@@ -36,37 +41,59 @@ export const Timer: React.FC<TimerProps> = ({ timeLeft, isActive, onStart, compa
           )}
         </div>
         {!isActive && timeLeft > 0 && (
-          <button onClick={onStart} className={`flex items-center justify-center ${isVertical ? 'w-8 h-8' : 'px-3 py-1.5'} bg-green-500 hover:bg-green-600 text-white rounded-full transition-colors`} title="Start Session" aria-label="Start Session">
+          <button
+            onClick={onStart}
+            className={`flex items-center justify-center ${isVertical ? 'w-8 h-8' : 'px-3 py-1.5'} bg-green-500 hover:bg-green-600 text-white rounded-full transition-colors`}
+            title="Start Session"
+            aria-label="Start Session"
+          >
             <Play className="w-4 h-4" />
             {!isVertical && <span className="ml-2 text-sm">Start</span>}
           </button>
         )}
-        {showProgress && isActive && (
+  {showProgress && isActive && (
           <div className={`${isVertical ? 'w-16' : 'w-24'} bg-white/20 rounded-full h-1.5`}>
-            <div className="bg-gradient-to-r from-green-400 to-blue-500 h-1.5 rounded-full transition-all duration-1000" style={{ width: `${getProgressPercentage()}%` }} />
+            <div
+              className="bg-gradient-to-r from-green-400 to-blue-500 h-1.5 rounded-full transition-all duration-1000"
+              style={{ width: `${getProgressPercentage()}%` }}
+            />
           </div>
         )}
-        {timeLeft === 0 && <span className="text-red-400 font-medium text-xs">Session Ended</span>}
+        {timeLeft === 0 && (
+          <span className="text-red-400 font-medium text-xs">Session Ended</span>
+        )}
       </div>
     );
   }
+
   return (
     <div className="flex items-center space-x-4">
       <div className="flex items-center space-x-2">
         <Clock className="w-5 h-5 text-white" />
-        <span className={`text-xl font-mono font-bold ${baseTextColor}`}>{formatTime(timeLeft)}</span>
+        <span className={`text-xl font-mono font-bold ${baseTextColor}`}>
+          {formatTime(timeLeft)}
+        </span>
       </div>
       {!isActive && timeLeft > 0 && (
-        <button onClick={onStart} className="flex items-center space-x-2 bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition-colors">
-          <Play className="w-4 h-4" /><span>Start Session</span>
+        <button
+          onClick={onStart}
+          className="flex items-center space-x-2 bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition-colors"
+        >
+          <Play className="w-4 h-4" />
+          <span>Start Session</span>
         </button>
       )}
-      {showProgress && isActive && (
+  {showProgress && isActive && (
         <div className="w-32 bg-white/20 rounded-full h-2">
-          <div className="bg-gradient-to-r from-green-400 to-blue-500 h-2 rounded-full transition-all duration-1000" style={{ width: `${getProgressPercentage()}%` }} />
+          <div
+            className="bg-gradient-to-r from-green-400 to-blue-500 h-2 rounded-full transition-all duration-1000"
+            style={{ width: `${getProgressPercentage()}%` }}
+          />
         </div>
       )}
-      {timeLeft === 0 && <span className="text-red-400 font-semibold">Session Ended</span>}
+      {timeLeft === 0 && (
+        <span className="text-red-400 font-semibold">Session Ended</span>
+      )}
     </div>
   );
 };

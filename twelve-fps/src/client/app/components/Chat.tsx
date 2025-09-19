@@ -16,44 +16,65 @@ export const Chat:React.FC<ChatProps> = ({ currentWeek, currentUser }) => {
   // Auto scroll
   useEffect(()=>{ const el = listRef.current; if(el) el.scrollTop = el.scrollHeight; }, [messages]);
 
-  // Fetch reddit username if not already known
+  // Try to resolve reddit username if not provided
   useEffect(()=>{
     if(!username){
-      (async ()=>{ try { const r = await fetch('/api/user'); if(r.ok){ const j=await r.json(); if(j?.username) setUsername(j.username); } } catch{} })();
+      (async ()=>{
+        try {
+          const r = await fetch('/api/user');
+          if(r.ok){ const j = await r.json(); if(j?.username){ setUsername(j.username); } }
+        } catch {}
+      })();
     }
   },[username]);
 
-  // Sync server week number (avoid stale prop mismatch)
-  useEffect(()=>{ let cancelled=false; (async()=>{ try { const r=await fetch('/api/week'); if(r.ok){ const j=await r.json(); if(!cancelled && j?.week && j.week!==week) setWeek(j.week); } } catch{} })(); return ()=>{cancelled=true}; },[week]);
+  // Sync real current week from server to avoid stale prop (e.g. showing 1 when server is 37)
+  useEffect(()=>{
+    let cancelled = false;
+    (async ()=>{
+      try { const r = await fetch('/api/week'); if(r.ok){ const j=await r.json(); if(!cancelled && j?.week && j.week !== week){ setWeek(j.week); } } } catch {}
+    })();
+    return ()=>{ cancelled = true; };
+  },[week]);
 
   useEffect(()=>{
     let pollingId:number|undefined;
     const startPolling = () => {
       if(pollingId) return; console.debug('[chat] start polling');
       const poll = async ()=>{
-        try { const r = await fetch(`/api/chat?week=${week}&_=${Date.now()}`); if(r.ok){ const j=await r.json(); if(Array.isArray(j.messages)){ setMessages(j.messages); setConnected(true); } } else if(r.status===401){ setError('no auth'); } } catch{}
+        try {
+          const r = await fetch(`/api/chat?week=${week}&_=${Date.now()}`);
+          if(r.ok){
+            const j=await r.json();
+            if(Array.isArray(j.messages)){
+              setMessages(j.messages);
+              setConnected(true);
+            }
+          } else if(r.status===401){ setError('no auth'); setConnected(false); }
+        } catch(e){ /* swallow */ }
       };
       poll(); pollingId = window.setInterval(poll, 5000);
     };
     esRef.current?.close();
     setConnected(false); setError(null);
     // initial fetch always
-    (async ()=>{ try { const r=await fetch(`/api/chat?week=${week}`); if(r.ok){ const j=await r.json(); if(Array.isArray(j.messages)){ setMessages(j.messages); setConnected(true); } } else if(r.status===401){ setError('no auth'); } } catch{} })();
+  (async ()=>{ try { const r=await fetch(`/api/chat?week=${week}`); if(r.ok){ const j=await r.json(); if(Array.isArray(j.messages)){ setMessages(j.messages); setConnected(true); } } else if(r.status===401){ setError('no auth'); } } catch{} })();
     const isDevvitHost = /devvit\.net/.test(location.hostname);
     let timeout = window.setTimeout(()=>{ if(!connected){ console.warn('[chat] SSE timeout -> polling'); startPolling(); } }, 3500);
     try {
       if(!isDevvitHost){
         const es = new EventSource(`/api/chat/stream?week=${week}`);
-        esRef.current = es;
-        es.addEventListener('init', (ev:any)=>{
-          try { const data = JSON.parse(ev.data); if(Array.isArray(data)) setMessages(data); setConnected(true); console.debug('[chat] SSE init messages', data.length); } catch { setConnected(true); }
-          clearTimeout(timeout);
-        });
-        es.addEventListener('message', (ev:any)=>{
-          try { const msg = JSON.parse(ev.data); setMessages(prev=>[...prev, msg]); } catch {}
-        });
-        es.onerror = ()=>{ console.warn('[chat] SSE error -> fallback polling'); startPolling(); };
+      esRef.current = es;
+      es.addEventListener('init', (ev:any)=>{
+        try { const data = JSON.parse(ev.data); if(Array.isArray(data)) setMessages(data); setConnected(true); console.debug('[chat] SSE init messages', data.length); } catch { setConnected(true); }
+        clearTimeout(timeout);
+      });
+      es.addEventListener('message', (ev:any)=>{
+        try { const msg = JSON.parse(ev.data); setMessages(prev=>[...prev, msg]); } catch {}
+      });
+      es.onerror = ()=>{ console.warn('[chat] SSE error -> fallback polling'); startPolling(); };
       } else {
+        // Skip SSE entirely on devvit host (likely blocked / 401)
         startPolling();
       }
     } catch {
@@ -63,14 +84,20 @@ export const Chat:React.FC<ChatProps> = ({ currentWeek, currentUser }) => {
   }, [week]);
 
   const send = async () => {
-    const body = input.trim(); if(!body) return; setInput('');
+    const body = input.trim(); if(!body) return;
+    setInput('');
     try {
       console.debug('[chat] sending', { body });
-      const r = await fetch('/api/chat',{ method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ body }) });
-      if(!r.ok){ setError('falló enviar'); if(r.status===401) setError('no auth'); }
-      else {
-        // immediate refresh
-        try { const gr = await fetch(`/api/chat?week=${week}&_=${Date.now()}`); if(gr.ok){ const j=await gr.json(); if(Array.isArray(j.messages)) setMessages(j.messages); } } catch{}
+  const r = await fetch('/api/chat',{ method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ body }) });
+      if(!r.ok){
+        setError('falló enviar');
+        if(r.status===401){ setError('no auth'); }
+      } else {
+        // Force immediate refresh so user sees their message without waiting interval
+        try {
+          const gr = await fetch(`/api/chat?week=${week}&_=${Date.now()}`);
+          if(gr.ok){ const j=await gr.json(); if(Array.isArray(j.messages)) setMessages(j.messages); }
+        } catch{}
       }
     } catch(e){ setError('falló enviar'); }
   };
@@ -97,6 +124,7 @@ export const Chat:React.FC<ChatProps> = ({ currentWeek, currentUser }) => {
       <div className="p-3 border-t border-white/10 flex gap-2">
         <input
           value={input}
+          // allow input even anon; server will tag as anon
           disabled={false}
           onChange={e=> setInput(e.target.value.slice(0,280))}
           onKeyDown={onKey}

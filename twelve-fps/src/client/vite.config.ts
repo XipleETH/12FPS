@@ -1,13 +1,15 @@
 import { defineConfig } from 'vite';
-import tailwind from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwind()],
+  // Set the root so that Vite uses the index.html inside src/client
+  root: 'src/client',
+  plugins: [react(), tailwindcss()],
   build: {
     outDir: '../../dist/client',
-  emptyOutDir: true,
+    emptyOutDir: true,
     sourcemap: true,
     rollupOptions: {
       output: {

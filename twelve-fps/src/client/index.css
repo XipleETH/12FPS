@@ -1,8 +1,26 @@
-@import 'tailwindcss';
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-/* Merged styles from root project */
-html, body { height: 100%; overscroll-behavior: none; -webkit-overflow-scrolling: auto; touch-action: manipulation; }
-#root { min-height: 100%; }
-body { font-family: system-ui, sans-serif; }
-/* Offset content for fixed 60px sidebar */
-body { padding-left: 60px; }
+/* Previene rebotes y desplazamientos indeseados durante dibujo táctil */
+html, body {
+	height: 100%;
+	overscroll-behavior: none;
+	-webkit-overflow-scrolling: auto;
+	touch-action: manipulation; /* Permitimos taps pero no gestos complejos globales */
+}
+
+#root {
+	min-height: 100%;
+}
+
+/* Frame media containers (consistent aspect 480x640) */
+.frame-aspect {
+	aspect-ratio: 480 / 640;
+	position: relative;
+}
+
+/* Ensure content starts to the right of the fixed 60px sidebar */
+body {
+	padding-left: 60px;
+}

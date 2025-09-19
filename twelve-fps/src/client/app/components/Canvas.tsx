@@ -2,477 +2,808 @@ import React, { forwardRef, useRef, useEffect, useState } from 'react';
 import type { BrushPreset } from '../brushes';
 
 interface CanvasProps {
-	activeColor: string;
-	brushSize: number;
-	isDrawing: boolean;
-	setIsDrawing: (drawing: boolean) => void;
-	disabled?: boolean;
-	brushMode?: 'solid' | 'soft' | 'fade' | 'spray';
-	brushPreset?: BrushPreset | undefined;
-	tool?: 'draw' | 'erase' | 'fill';
-	onBeforeMutate?: () => void;
-	zoom?: number;
-	onionImage?: string | undefined;
-	onionOpacity?: number; // 0..1
+  activeColor: string;
+  brushSize: number;
+  isDrawing: boolean;
+  setIsDrawing: (drawing: boolean) => void;
+  disabled?: boolean;
+  // Único engine actual: mangaPen
+  brushPreset?: BrushPreset; // se usará size/opacity/taper/jitter
+  // Active tool selection
+  tool?: 'draw' | 'erase' | 'fill';
+  // Called once right before a mutating action (stroke start or fill)
+  onBeforeMutate?: () => void;
+  // Controlled zoom props (optional). If not provided, the component manages its own zoom internally.
+  zoom?: number;
+  // Onion skin (previous frame) overlay
+  onionImage?: string;
+  onionOpacity?: number; // 0..1
+  // Called after a drawing mutation (end of stroke segment / fill) to allow external persistence
+  onDirty?: () => void;
+  // Optional image (dataURL) to restore onto a freshly mounted/cleared canvas
+  restoreImage?: string | null;
 }
 
-const FIXED_WIDTH = 480; // Logical drawing width
-const FIXED_HEIGHT = 640; // Logical drawing height
+// Default fallback size (desktop)
+const DEFAULT_WIDTH = 480;
+const DEFAULT_HEIGHT = 640;
 
 export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
-	({ activeColor, brushSize, isDrawing, setIsDrawing, disabled, brushMode = 'solid', brushPreset, tool = 'draw', onBeforeMutate, zoom: controlledZoom, onionImage, onionOpacity = 0.4 }, ref) => {
-		const internalRef = useRef<HTMLCanvasElement>(null);
-		const canvasRef = (ref as React.RefObject<HTMLCanvasElement>) || internalRef;
-		const lastPointRef = useRef<{ x: number; y: number } | null>(null);
-		const strokeProgressRef = useRef<number>(0);
-		const containerRef = useRef<HTMLDivElement>(null);
-		// User-controlled zoom (slider) remains separate from auto fit scaling.
-		const [internalZoom] = useState(1);
-		const userZoom = controlledZoom ?? internalZoom;
-		// Auto scale to ensure the entire canvas fits on small (mobile) viewports without scroll.
-		const [autoScale, setAutoScale] = useState(1);
-		// Effective zoom used for sizing & pointer math (auto fit * user zoom)
-		const zoom = userZoom * autoScale;
-		const penActionRef = useRef<'draw' | 'erase' | 'pan' | null>(null);
-		const eraseRef = useRef(false);
-		const activeDrawPointerIdRef = useRef<number | null>(null);
-		const activePanPointerIdRef = useRef<number | null>(null);
+  ({ activeColor, brushSize, isDrawing, setIsDrawing, disabled, brushPreset, tool = 'draw', onBeforeMutate, zoom: controlledZoom, onionImage, onionOpacity = 0.4, onDirty, restoreImage }, ref) => {
+  const internalRef = useRef<HTMLCanvasElement>(null);
+    const canvasRef = (ref as React.RefObject<HTMLCanvasElement>) || internalRef;
+    const lastPointRef = useRef<{ x: number; y: number } | null>(null);
+  const strokeProgressRef = useRef<number>(0); // distancia acumulada
+  // Buffer para estabilización (line smoothing) tipo ventana móvil
+  const smoothBuffer = useRef<Array<{x:number;y:number;t:number;pressure:number}>>([]);
+  // Flag para evitar que el primer movimiento genere línea conectando con stroke previo
+  const firstMoveRef = useRef<boolean>(false);
+  // Guardamos la posición inicial para poder dibujar un "tap" como punto
+  const strokeStartPosRef = useRef<{x:number;y:number}|null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  // Internal zoom state only used when no controlled zoom is supplied
+  const [internalZoom] = useState(1);
+  const zoom = controlledZoom ?? internalZoom;
+  const penActionRef = useRef<'draw' | 'erase' | 'pan' | null>(null);
+  const eraseRef = useRef(false);
+  const activeDrawPointerIdRef = useRef<number | null>(null);
+  const activePanPointerIdRef = useRef<number | null>(null);
 
-		useEffect(() => {
-			const canvas = canvasRef.current;
-			if (!canvas) return;
-			const ctx = canvas.getContext('2d');
-			if (!ctx) return;
-			const dpr = window.devicePixelRatio || 1;
-			canvas.width = FIXED_WIDTH * dpr;
-			canvas.height = FIXED_HEIGHT * dpr;
-			ctx.scale(dpr, dpr);
-			ctx.fillStyle = '#ffffff';
-			ctx.fillRect(0, 0, FIXED_WIDTH, FIXED_HEIGHT);
-			ctx.lineCap = 'round';
-			ctx.lineJoin = 'round';
-		}, []);
+    // Responsive size (full viewport on mobile)
+    const [displaySize, setDisplaySize] = useState<{w:number;h:number}>({ w: DEFAULT_WIDTH, h: DEFAULT_HEIGHT });
+    const isMobile = () => window.innerWidth < 768;
+    useEffect(() => {
+      const update = () => {
+        if (isMobile()) {
+          // Use full visual viewport height if available (accounts for mobile URL bar)
+          const vv = (window as any).visualViewport;
+          const height = vv ? vv.height : window.innerHeight;
+          setDisplaySize({ w: window.innerWidth, h: height });
+        } else {
+          setDisplaySize({ w: DEFAULT_WIDTH, h: DEFAULT_HEIGHT });
+        }
+      };
+      update();
+      window.addEventListener('resize', update);
+      if ((window as any).visualViewport) {
+        (window as any).visualViewport.addEventListener('resize', update);
+      }
+      return () => {
+        window.removeEventListener('resize', update);
+        if ((window as any).visualViewport) {
+          (window as any).visualViewport.removeEventListener('resize', update);
+        }
+      };
+    }, []);
 
-		// Compute auto scale so the full logical canvas fits within viewport (no scroll needed) on mobile.
-		useEffect(() => {
-			const computeScale = () => {
-				const vw = window.innerWidth;
-				const vh = window.innerHeight;
-				// Reserve a small margin so it doesn't butt against edges (8px each side)
-				const margin = 16;
-				const scale = Math.min(1, (vw - margin) / FIXED_WIDTH, (vh - margin) / FIXED_HEIGHT);
-				setAutoScale(scale <= 0 ? 1 : scale);
-			};
-			computeScale();
-			window.addEventListener('resize', computeScale);
-			return () => window.removeEventListener('resize', computeScale);
-		}, []);
+    // Initialize & resize canvas backing store when displaySize changes (only once content empty)
+    useEffect(() => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const dpr = Math.min(3, window.devicePixelRatio || 1); // cap dpr for memory
+      const logicalW = displaySize.w;
+      const logicalH = displaySize.h;
+      // Resize backing store; this clears content
+      canvas.width = Math.round(logicalW * dpr);
+      canvas.height = Math.round(logicalH * dpr);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.setTransform(1,0,0,1,0,0);
+      ctx.scale(dpr, dpr);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, logicalW, logicalH);
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+    }, [displaySize.w, displaySize.h]);
 
-		const hexToRgba = (hex: string, alpha: number) => {
-			let h = hex.replace('#', '');
-			if (h.length === 3) h = h.split('').map(c => c + c).join('');
-			const bigint = parseInt(h, 16);
-			const r = (bigint >> 16) & 255;
-			const g = (bigint >> 8) & 255;
-			const b = bigint & 255;
-			return `rgba(${r},${g},${b},${alpha})`;
-		};
+  // mouse pos helper removed (pointer events compute directly)
 
-		const hexToRgbTuple = (hex: string): [number, number, number, number] => {
-			let h = hex.replace('#', '');
-			if (h.length === 3) h = h.split('').map(c => c + c).join('');
-			const bigint = parseInt(h, 16);
-			const r = (bigint >> 16) & 255;
-			const g = (bigint >> 8) & 255;
-			const b = bigint & 255;
-			return [r, g, b, 255];
-		};
+  // touch drawing removed (single-finger pans, stylus uses pointer events)
 
-		const drawLine = (from: { x: number; y: number }, to: { x: number; y: number }) => {
-			const canvas = canvasRef.current;
-			if (!canvas || disabled) return;
-			const ctx = canvas.getContext('2d');
-			if (!ctx) return;
-			const opacityMul = Math.max(0, Math.min(1, brushPreset?.opacity ?? 1));
-			const jitter = Math.max(0, Math.min(1, brushPreset?.jitter ?? 0));
-			const taper = Math.max(0, Math.min(1, brushPreset?.taper ?? 0));
-			const hardness = Math.max(0, Math.min(1, brushPreset?.hardness ?? 0.5));
-			const densityMul = Math.max(0.1, brushPreset?.density ?? 1);
-			const particleRange: [number, number] | null = brushPreset?.particleSize ?? null;
-			const drip = !!brushPreset?.drip;
-			const jitterPoint = (pt: { x: number; y: number }) => {
-				if (jitter <= 0) return pt;
-				const r = brushSize * jitter;
-				const a = Math.random() * Math.PI * 2;
-				const d = Math.random() * r;
-				return { x: pt.x + Math.cos(a) * d, y: pt.y + Math.sin(a) * d };
-			};
-			if (brushMode === 'spray') {
-				const dx = to.x - from.x;
-				const dy = to.y - from.y;
-				const dist = Math.hypot(dx, dy);
-				const stepSpacing = Math.max(1, brushSize * 0.4);
-				const steps = Math.max(1, Math.floor(dist / stepSpacing));
-				const radius = brushSize / 2;
-				const basePps = Math.min(60, Math.max(6, Math.floor(brushSize * 2)));
-				const particlesPerStep = Math.max(1, Math.floor(basePps * densityMul));
-				ctx.fillStyle = activeColor;
-				for (let i = 0; i <= steps; i++) {
-					const t = i / steps;
-					const cx = from.x + dx * t;
-					const cy = from.y + dy * t;
-					for (let p = 0; p < particlesPerStep; p++) {
-						const angle = Math.random() * Math.PI * 2;
-						const rr = Math.random() * radius;
-						const px = cx + Math.cos(angle) * rr;
-						const py = cy + Math.sin(angle) * rr;
-						const alpha = (0.15 + Math.random() * 0.55) * opacityMul;
-						ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
-						const pr = particleRange ? (particleRange[0] + Math.random() * (particleRange[1] - particleRange[0])) : Math.max(0.8, brushSize * 0.08 + Math.random() * (brushSize * 0.12));
-						ctx.beginPath();
-						ctx.arc(px, py, pr, 0, Math.PI * 2);
-						ctx.fill();
-						if (drip && Math.random() < 0.06) {
-							const len = Math.random() * brushSize * 1.2;
-							const segments = Math.max(3, Math.floor(len / 3));
-							let sy = py;
-							for (let s = 0; s < segments; s++) {
-								const a2 = Math.max(0, alpha * (1 - s / segments));
-								ctx.globalAlpha = a2;
-								const pr2 = pr * (0.9 - 0.6 * (s / segments));
-								ctx.beginPath();
-								ctx.arc(px + (Math.random() - 0.5) * 1.2, sy + 1.5, Math.max(0.3, pr2), 0, Math.PI * 2);
-								ctx.fill();
-								sy += 1.5;
-							}
-						}
-					}
-				}
-				ctx.globalAlpha = 1;
-				return;
-			}
-			if (brushMode === 'solid') {
-					// Enhanced dual taper: pointed start & heuristic pointed end
-					const p0 = jitterPoint(from);
-					const p1 = jitterPoint(to);
-					const progress = strokeProgressRef.current;
-					// Classic progressive taper (reduces over stroke length)
-					const classicTaper = 1 - taper * Math.min(1, progress / (200 + brushSize * 20));
-					// Start ramp (fade in)
-					const fadeLen = Math.max(12, brushSize * 3);
-					const startFactor = Math.min(1, progress / fadeLen);
-					// Heuristic end ramp: if stroke already long, gradually narrow when movement slows
-					let endFactor = 1;
-					if (progress > 2 * fadeLen) {
-						// Approximate speed using segment length
-						const segDx = p1.x - p0.x; const segDy = p1.y - p0.y; const segDist = Math.hypot(segDx, segDy);
-						const speed = segDist; // pixels this segment
-						const slow = Math.min(1, Math.max(0, (40 - speed) / 40)); // 0 fast .. 1 slow
-						endFactor = 1 - 0.7 * (speed < 6 ? 1 : slow * 0.6);
-						endFactor = Math.max(0.15, endFactor);
-					}
-					const dualTaper = Math.max(0.15, Math.min(1, startFactor * endFactor));
-					const taperFactor = Math.min(classicTaper, dualTaper);
-					ctx.globalAlpha = opacityMul;
-					ctx.strokeStyle = activeColor;
-					ctx.lineCap = 'round';
-					ctx.lineJoin = 'round';
-					ctx.lineWidth = Math.max(0.5, brushSize * taperFactor);
-					ctx.beginPath();
-					ctx.moveTo(p0.x, p0.y);
-					ctx.lineTo(p1.x, p1.y);
-					ctx.stroke();
-					ctx.globalAlpha = 1;
-					return;
-			}
-			if (brushMode === 'fade') {
-				const progress = strokeProgressRef.current;
-				const alpha = Math.max(0.05, 1 - progress / 800) * opacityMul;
-				const p0 = jitterPoint(from);
-				const p1 = jitterPoint(to);
-				const taperFactor = 1 - taper * Math.min(1, progress / (200 + brushSize * 20));
-				ctx.strokeStyle = activeColor;
-				ctx.globalAlpha = alpha;
-				ctx.lineWidth = Math.max(0.5, brushSize * taperFactor);
-				ctx.beginPath();
-				ctx.moveTo(p0.x, p0.y);
-				ctx.lineTo(p1.x, p1.y);
-				ctx.stroke();
-				strokeProgressRef.current += Math.hypot(to.x - from.x, to.y - from.y);
-				ctx.globalAlpha = 1;
-				return;
-			}
-			const dx = to.x - from.x;
-			const dy = to.y - from.y;
-			const dist = Math.hypot(dx, dy);
-			const steps = Math.max(1, Math.floor(dist / (brushSize * 0.4)));
-			for (let i = 0; i <= steps; i++) {
-				const t = i / steps;
-				const baseX = from.x + dx * t;
-				const baseY = from.y + dy * t;
-				const jp = jitterPoint({ x: baseX, y: baseY });
-				const x = jp.x;
-				const y = jp.y;
-				const radius = brushSize / 2;
-				const g = ctx.createRadialGradient(x, y, 0, x, y, radius);
-				const centerAlpha = 0.9 * opacityMul;
-				const innerStop = Math.max(0, Math.min(0.95, hardness));
-				g.addColorStop(0, hexToRgba(activeColor, centerAlpha));
-				g.addColorStop(innerStop, hexToRgba(activeColor, centerAlpha * 0.85));
-				g.addColorStop(1, hexToRgba(activeColor, 0));
-				ctx.fillStyle = g;
-				ctx.beginPath();
-				ctx.arc(x, y, radius, 0, Math.PI * 2);
-				ctx.fill();
-			}
-			ctx.globalAlpha = 1;
-		};
+  // hexToRgba removido (no necesario para mangaPen, fill usa blending directo)
 
-		const panState = useRef<{ x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null);
-		const handleTouchStart = (_e: React.TouchEvent<HTMLCanvasElement>) => {};
-		const handleTouchMove = (_e: React.TouchEvent<HTMLCanvasElement>) => {};
-		const handleTouchEnd = (_e: React.TouchEvent<HTMLCanvasElement>) => {};
+    const hexToRgbTuple = (hex: string): [number, number, number, number] => {
+      let h = hex.replace('#', '');
+      if (h.length === 3) {
+        h = h.split('').map(c => c + c).join('');
+      }
+      const bigint = parseInt(h, 16);
+      const r = (bigint >> 16) & 255;
+      const g = (bigint >> 8) & 255;
+      const b = bigint & 255;
+      return [r, g, b, 255];
+    };
 
-		const floodFill = (x: number, y: number) => {
-			const canvas = canvasRef.current;
-			if (!canvas) return;
-			const ctx = canvas.getContext('2d');
-			if (!ctx) return;
-			const dpr = window.devicePixelRatio || 1;
-			const w = canvas.width;
-			const h = canvas.height;
-			const sx = Math.floor(x * dpr);
-			const sy = Math.floor(y * dpr);
-			if (sx < 0 || sy < 0 || sx >= w || sy >= h) return;
-			const imageData = ctx.getImageData(0, 0, w, h);
-			const data = imageData.data;
-			const idx = (sy * w + sx) * 4;
-			const targetR = data[idx]!;
-			const targetG = data[idx + 1]!;
-			const targetB = data[idx + 2]!;
-			const targetA = data[idx + 3]!;
-			const [fillR, fillG, fillB] = hexToRgbTuple(activeColor);
-			const opacityMul = Math.max(0, Math.min(1, brushPreset?.opacity ?? 1));
-			const hardness = Math.max(0, Math.min(1, brushPreset?.hardness ?? 0.5));
-			const densityMul = Math.max(0.1, brushPreset?.density ?? 1);
-			const particleRange: [number, number] | null = brushPreset?.particleSize ?? null;
-			const near = (a: number, b: number, tol: number) => Math.abs(a - b) <= tol;
-			const T = 16;
-					const safe = (i: number): number => data[i] as number; // typed array index always yields number
-					const matchesTarget = (i: number) => {
-						// Fast bounds check (should not trigger normally)
-						if (i < 0 || i + 3 >= data.length) return false;
-						return near(safe(i), targetR, T) && near(safe(i + 1), targetG, T) && near(safe(i + 2), targetB, T) && near(safe(i + 3), targetA, T);
-					};
-			const mask = new Uint8Array(w * h);
-			let minX = sx, maxX = sx, minY = sy, maxY = sy;
-			const stack: Array<[number, number]> = [[sx, sy]];
-			while (stack.length) {
-				const [px, py] = stack.pop()!;
-				let nx = px;
-				let m = py * w + nx;
-				let i = m * 4;
-				while (nx >= 0 && !mask[m] && matchesTarget(i)) { nx--; m--; i -= 4; }
-				nx++; m++; i += 4;
-				let spanUp = false; let spanDown = false;
-				while (nx < w && !mask[m] && matchesTarget(i)) {
-					mask[m] = 1;
-					if (nx < minX) minX = nx; if (nx > maxX) maxX = nx; if (py < minY) minY = py; if (py > maxY) maxY = py;
-					if (py > 0) {
-						const am = m - w; const ai = i - w * 4;
-						if (!spanUp && !mask[am] && matchesTarget(ai)) { stack.push([nx, py - 1]); spanUp = true; }
-						else if (spanUp && (mask[am] || !matchesTarget(ai))) spanUp = false;
-					}
-					if (py < h - 1) {
-						const bm = m + w; const bi = i + w * 4;
-						if (!spanDown && !mask[bm] && matchesTarget(bi)) { stack.push([nx, py + 1]); spanDown = true; }
-						else if (spanDown && (mask[bm] || !matchesTarget(bi))) spanDown = false;
-					}
-					nx++; m++; i += 4;
-				}
-			}
-			if (minX > maxX || minY > maxY) return;
-					const blendPixel = (di: number, a: number) => {
-						const inv = 1 - a;
-						const dr = safe(di);
-						const dg = safe(di + 1);
-						const db = safe(di + 2);
-						const da = safe(di + 3) / 255;
-				const outA = a + da * inv;
-				const outR = Math.round(fillR * a + dr * inv);
-				const outG = Math.round(fillG * a + dg * inv);
-				const outB = Math.round(fillB * a + db * inv);
-				data[di] = outR; data[di + 1] = outG; data[di + 2] = outB; data[di + 3] = Math.round(outA * 255);
-			};
-			if (brushMode === 'spray') {
-				const bboxW = maxX - minX + 1;
-				const bboxH = maxY - minY + 1;
-				const radius = Math.max(1, Math.floor(brushSize * dpr) / 2);
-				const area = bboxW * bboxH;
-				const density = Math.floor(Math.min(12000, Math.max(800, Math.floor((area / 50) * Math.max(0.6, brushSize / 12)))) * densityMul);
-				ctx.save(); ctx.fillStyle = activeColor;
-				for (let p = 0; p < density; p++) {
-					const rx = minX + Math.floor(Math.random() * bboxW);
-					const ry = minY + Math.floor(Math.random() * bboxH);
-					if (!mask[ry * w + rx]) continue;
-					const alpha = (0.15 + Math.random() * 0.55) * opacityMul;
-					ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
-					const ang = Math.random() * Math.PI * 2;
-					const rr = Math.random() * radius;
-					const px = rx + Math.cos(ang) * rr;
-					const py = ry + Math.sin(ang) * rr;
-					ctx.beginPath();
-					const pr = particleRange ? (particleRange[0] + Math.random() * (particleRange[1] - particleRange[0])) : Math.max(0.8, brushSize * 0.08 + Math.random() * (brushSize * 0.12));
-					ctx.arc(px / dpr, py / dpr, pr, 0, Math.PI * 2);
-					ctx.fill();
-				}
-				ctx.restore();
-				return;
-			}
-			if (brushMode === 'solid') {
-				for (let y0 = minY; y0 <= maxY; y0++) {
-					let m = y0 * w + minX; let di = m * 4;
-					for (let x0 = minX; x0 <= maxX; x0++, m++, di += 4) {
-						if (!mask[m]) continue;
-						if (opacityMul >= 0.999) { data[di] = fillR; data[di + 1] = fillG; data[di + 2] = fillB; data[di + 3] = 255; }
-						else blendPixel(di, opacityMul);
-					}
-				}
-				ctx.putImageData(imageData, 0, 0); return;
-			}
-			if (brushMode === 'fade') {
-				const maxDist = Math.max(8, Math.hypot(maxX - minX, maxY - minY) * 0.75);
-				for (let y0 = minY; y0 <= maxY; y0++) {
-					let m = y0 * w + minX; let di = m * 4;
-					for (let x0 = minX; x0 <= maxX; x0++, m++, di += 4) {
-						if (!mask[m]) continue;
-						const dx = x0 - sx; const dy = y0 - sy; const dist = Math.hypot(dx, dy);
-						const a = Math.max(0.05, Math.min(1, 1 - dist / maxDist)) * opacityMul;
-						blendPixel(di, a);
-					}
-				}
-				ctx.putImageData(imageData, 0, 0); return;
-			}
-			const R = Math.max(2, Math.floor(brushSize * dpr));
-			const offsets: Array<{ dx: number; dy: number; d: number }> = [];
-			for (let d = 1; d <= R; d++) {
-				for (let dy2 = -d; dy2 <= d; dy2++) {
-					for (let dx2 = -d; dx2 <= d; dx2++) {
-						if (Math.max(Math.abs(dx2), Math.abs(dy2)) !== d) continue;
-						offsets.push({ dx: dx2, dy: dy2, d });
-					}
-				}
-			}
-			for (let y0 = minY; y0 <= maxY; y0++) {
-				let m = y0 * w + minX; let di = m * 4;
-				for (let x0 = minX; x0 <= maxX; x0++, m++, di += 4) {
-					if (!mask[m]) continue;
-					let edgeD = R;
-											for (let k = 0; k < offsets.length; k++) {
-												const off = offsets[k]!;
-												const ox = x0 + off.dx; const oy = y0 + off.dy;
-												if (ox < 0 || oy < 0 || ox >= w || oy >= h) { edgeD = Math.min(edgeD, off.d); break; }
-												if (!mask[oy * w + ox]) { edgeD = Math.min(edgeD, off.d); break; }
-											}
-					const base = Math.max(0.25, Math.min(1, edgeD / R));
-					const expo = 2 - 1.5 * Math.max(0, Math.min(1, hardness));
-					const a = Math.pow(base, expo) * opacityMul;
-					blendPixel(di, Math.max(0, Math.min(1, a)));
-				}
-			}
-			ctx.putImageData(imageData, 0, 0);
-		};
+  const drawLine = (from: { x: number; y: number }, to: { x: number; y: number }, pressure: number) => {
+      const canvas = canvasRef.current;
+      if (!canvas || disabled) return;
 
-		const beginStroke = (pos: { x: number; y: number }, erase: boolean) => {
-			onBeforeMutate?.();
-			strokeProgressRef.current = 0;
-			lastPointRef.current = pos;
-			eraseRef.current = erase;
-			setIsDrawing(!erase);
-		};
-		const endStroke = () => {
-			setIsDrawing(false);
-			lastPointRef.current = null;
-			eraseRef.current = false;
-		};
-		const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-			if (disabled) return;
-			if ((penActionRef.current === 'draw' || penActionRef.current === 'erase') && activeDrawPointerIdRef.current !== e.pointerId) return;
-			if (e.pointerType !== 'touch') (e.target as HTMLCanvasElement).setPointerCapture(e.pointerId);
-			penActionRef.current = null; panState.current = null;
-			const native = e.nativeEvent as PointerEvent & { offsetX: number; offsetY: number };
-			// Adjust pointer coords by effective zoom (auto fit * user zoom)
-			const pos = { x: native.offsetX / zoom, y: native.offsetY / zoom };
-			const buttons = e.buttons;
-			if (tool === 'fill' && e.pointerType !== 'touch') {
-				if ((e.pointerType === 'mouse' && (buttons & 1)) || (e.pointerType === 'pen' && (buttons & 1))) {
-					onBeforeMutate?.(); floodFill(pos.x, pos.y); return;
-				}
-			}
-			const container = containerRef.current!;
-			if (e.pointerType === 'pen') {
-				if ((buttons & 32) || (buttons & 4) || tool === 'erase') { penActionRef.current = 'erase'; activeDrawPointerIdRef.current = e.pointerId; beginStroke(pos, true); }
-				else if (buttons & 1) { penActionRef.current = 'draw'; activeDrawPointerIdRef.current = e.pointerId; beginStroke(pos, false); }
-				else if (buttons & 2) { penActionRef.current = 'pan'; activePanPointerIdRef.current = e.pointerId; panState.current = { x: e.clientX, y: e.clientY, scrollLeft: container.scrollLeft, scrollTop: container.scrollTop }; }
-			} else if (e.pointerType === 'mouse') {
-				if (buttons & 2) { penActionRef.current = 'pan'; activePanPointerIdRef.current = e.pointerId; panState.current = { x: e.clientX, y: e.clientY, scrollLeft: container.scrollLeft, scrollTop: container.scrollTop }; }
-				else if (buttons & 1) { if (tool === 'erase') { penActionRef.current = 'erase'; activeDrawPointerIdRef.current = e.pointerId; beginStroke(pos, true); } else { penActionRef.current = 'draw'; activeDrawPointerIdRef.current = e.pointerId; beginStroke(pos, false); } }
-			} else if (e.pointerType === 'touch') {
-				if (penActionRef.current === 'draw' || penActionRef.current === 'erase') return;
-				penActionRef.current = 'pan'; activePanPointerIdRef.current = e.pointerId; panState.current = { x: e.clientX, y: e.clientY, scrollLeft: container.scrollLeft, scrollTop: container.scrollTop }; }
-		};
-		const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-			if (disabled) return; if (!penActionRef.current) return; const container = containerRef.current!;
-			if (penActionRef.current === 'pan' && panState.current && activePanPointerIdRef.current === e.pointerId) { const dx = e.clientX - panState.current.x; const dy = e.clientY - panState.current.y; container.scrollLeft = panState.current.scrollLeft - dx; container.scrollTop = panState.current.scrollTop - dy; return; }
-			if ((penActionRef.current === 'draw' || penActionRef.current === 'erase') && lastPointRef.current && activeDrawPointerIdRef.current === e.pointerId) {
-				const native = e.nativeEvent as PointerEvent & { offsetX: number; offsetY: number };
-				const pos = { x: native.offsetX / zoom, y: native.offsetY / zoom };
-				if (penActionRef.current === 'erase') {
-					const ctx = canvasRef.current?.getContext('2d');
-					if (ctx) { ctx.save(); ctx.globalCompositeOperation = 'destination-out'; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = 'rgba(0,0,0,1)'; ctx.lineWidth = brushSize; ctx.beginPath(); ctx.moveTo(lastPointRef.current.x, lastPointRef.current.y); ctx.lineTo(pos.x, pos.y); ctx.stroke(); ctx.restore(); }
-				} else drawLine(lastPointRef.current, pos);
-				lastPointRef.current = pos;
-			}
-		};
-		const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
-			if (e.pointerType !== 'touch') (e.target as HTMLCanvasElement).releasePointerCapture(e.pointerId);
-			if (penActionRef.current === 'pan' && activePanPointerIdRef.current === e.pointerId) { panState.current = null; activePanPointerIdRef.current = null; }
-			else if (penActionRef.current === 'draw' || penActionRef.current === 'erase') { if (activeDrawPointerIdRef.current === e.pointerId) { endStroke(); activeDrawPointerIdRef.current = null; } }
-			if (penActionRef.current && ((penActionRef.current === 'pan' && activePanPointerIdRef.current === null) || (penActionRef.current !== 'pan' && activeDrawPointerIdRef.current === null))) penActionRef.current = null;
-		};
-		return (
-			<div
-				ref={containerRef}
-				className="relative border rounded-lg bg-white inline-block overflow-hidden"
-				style={{ width: FIXED_WIDTH * autoScale, height: FIXED_HEIGHT * autoScale }}
-			>
-				<div className="relative" style={{ width: FIXED_WIDTH * zoom, height: FIXED_HEIGHT * zoom }}>
-					{onionImage && (
-						<img src={onionImage} alt="previous frame" className="absolute inset-0 pointer-events-none" style={{ width: '100%', height: '100%', objectFit: 'fill', opacity: Math.max(0, Math.min(1, onionOpacity)) }} />
-					)}
-					<canvas
-						ref={canvasRef}
-						width={FIXED_WIDTH}
-						height={FIXED_HEIGHT}
-						className={`${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-crosshair'} absolute inset-0 bg-white select-none`}
-						data-drawing={isDrawing ? 'true' : 'false'}
-						style={{ width: '100%', height: '100%', touchAction: 'none' }}
-						onTouchStart={handleTouchStart}
-						onTouchMove={handleTouchMove}
-						onTouchEnd={handleTouchEnd}
-						onPointerDown={handlePointerDown}
-						onPointerMove={handlePointerMove}
-						onPointerUp={handlePointerUp}
-						onPointerLeave={handlePointerUp}
-						onContextMenu={(e) => e.preventDefault()}
-					/>
-				</div>
-				{disabled && (
-					<div className="absolute inset-0 flex items-center justify-center bg-black/50">
-						<p className="text-white font-semibold text-lg">Start session to draw</p>
-					</div>
-				)}
-			</div>
-		);
-	}
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      // Resolve preset params with sensible defaults
+  const opacityMul = Math.max(0, Math.min(1, brushPreset?.opacity ?? 1));
+  const jitter = Math.max(0, Math.min(1, brushPreset?.jitter ?? 0.02));
+  const taper = Math.max(0, Math.min(1, brushPreset?.taper ?? 0.6));
+  // Simulación de presión: si device no da pressure, usamos velocidad inversa
+  // Usar siempre el valor dinámico del slider (brushSize) como autoridad.
+  // El tamaño del preset solo sirve como valor inicial cuando se selecciona (SidePanels ya hace setBrushSize(p.size)).
+  const baseSize = brushSize; // antes: brushPreset?.size || brushSize (causaba que el slider no tuviera efecto cuando había preset)
+  const dist = Math.hypot(to.x - from.x, to.y - from.y);
+  const speed = dist; // px por frame event
+  const simulatedPressure = pressure && pressure > 0 ? pressure : Math.max(0.15, Math.min(1, 1 - speed / 40));
+    // Taper aplicado según progreso de stroke (solo reducción final clásica)
+  const progress = strokeProgressRef.current;
+  const classicTaper = 1 - taper * Math.min(1, progress / (180 + baseSize * 14));
+  // Para efecto "punta al inicio y al final" (Ink): añadimos rampa inicial y final simétrica.
+  // Estrategia: estimar una longitud objetivo adaptativa (strokeTotalRef). Mientras no sepamos la final,
+  // aplicamos sólo la rampa inicial. Al terminar el trazo (endStroke) ya no redibujamos, así que el final
+  // debe anticiparse: usamos ventana móvil de últimos segmentos para suponer si vamos desacelerando.
+  // Simplificación: definimos una longitud de fade (fadeLen) proporcional al tamaño del pincel y un máximo.
+  const fadeLen = Math.max(12, baseSize * 3);
+  // Rampa inicial: factor aumenta de 0.15 -> 1 en fadeLen
+  const startFactor = Math.min(1, progress / fadeLen);
+  // Intento de estimación dinámica: si la velocidad es muy baja consistentemente podríamos estar al final.
+  // Para no complicar, aplicamos un pre-taper final sólo cuando strokeProgress supera 2*fadeLen:
+  let endFactor = 1;
+  if (progress > 2 * fadeLen) {
+    // End factor desciende en los últimos fadeLen px del tramo reciente.
+    // Sin saber longitud total, usamos ventana: aplicamos descenso leve basado en velocidad reciente (speed).
+    const slow = Math.min(1, Math.max(0, (40 - speed) / 40)); // 0 (rápido) .. 1 (muy lento)
+    // Mezcla con proximidad a posible final (heurística: si speed < 6 => fuerte taper)
+    endFactor = 1 - 0.7 * (speed < 6 ? 1 : slow * 0.6);
+    endFactor = Math.max(0.15, endFactor);
+  }
+  // Factor combinado: enfatizar inicio y final, pero nunca exceder 1 ni caer bajo 0.15 salvo control.
+  const dualTaper = Math.max(0.15, Math.min(1, startFactor * endFactor));
+  // Combinar con classicTaper (que reduce progresivo) tomando el menor para mantener afinado si aplica.
+  const taperFactor = Math.min(classicTaper, dualTaper);
+
+      // Helper para jitter mínimo orgánico
+      const jitterPoint = (pt: {x:number;y:number}) => {
+        if (jitter <= 0) return pt;
+        const r = baseSize * jitter;
+        const a = Math.random() * Math.PI * 2;
+        const d = Math.random() * r;
+        return { x: pt.x + Math.cos(a) * d, y: pt.y + Math.sin(a) * d };
+      };
+      if (brushPreset?.engine === 'pencil') {
+        // Lápiz: múltiples micro trazos puntuales dentro de un óvalo con textura aleatoria
+        const steps = Math.max(1, Math.floor(dist / Math.max(1, baseSize * 0.35)));
+        const dirX = (to.x - from.x) / steps;
+        const dirY = (to.y - from.y) / steps;
+        const grainCountBase = 4 + Math.floor(baseSize * 0.6);
+        const localOpacity = opacityMul * 0.9;
+        for (let i = 0; i <= steps; i++) {
+          const cx = from.x + dirX * i;
+          const cy = from.y + dirY * i;
+          const grains = grainCountBase + Math.floor(Math.random() * 3);
+          for (let g = 0; g < grains; g++) {
+            const ang = Math.random() * Math.PI * 2;
+            const rad = (baseSize * 0.5) * Math.sqrt(Math.random());
+            const gx = cx + Math.cos(ang) * rad * 0.6;
+            const gy = cy + Math.sin(ang) * rad;
+            const a = localOpacity * (0.25 + Math.random() * 0.55) * (pressure || simulatedPressure);
+            ctx.globalAlpha = Math.min(1, a);
+            const dotR = Math.max(0.4, baseSize * 0.08 + Math.random() * (baseSize * 0.15));
+            ctx.beginPath();
+            ctx.fillStyle = activeColor;
+            ctx.arc(gx, gy, dotR, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+        ctx.globalAlpha = 1;
+        strokeProgressRef.current += dist;
+        return;
+      }
+      // Estilo manga (entintado): trazos vectoriales suavizados a partir de puntos bufferizados
+      if (brushPreset?.texture === 'charcoal') {
+        // Carbón: múltiples manchas/granos con opacidad variable, halo suave y acumulación rápida
+        const steps = Math.max(1, Math.floor(dist / Math.max(1, baseSize * 0.45)));
+        const dirX = (to.x - from.x) / steps;
+        const dirY = (to.y - from.y) / steps;
+        const grainCountBase = 10 + Math.floor(baseSize * 1.1);
+        for (let i = 0; i <= steps; i++) {
+          const cx = from.x + dirX * i;
+          const cy = from.y + dirY * i;
+          const grains = grainCountBase + Math.floor(Math.random() * 6);
+          for (let g = 0; g < grains; g++) {
+            const ang = Math.random() * Math.PI * 2;
+            const rad = (baseSize * 0.65) * Math.sqrt(Math.random());
+            const gx = cx + Math.cos(ang) * rad;
+            const gy = cy + Math.sin(ang) * rad * 0.85;
+            // Densidad central mayor; bordes más suaves
+            const edge = rad / (baseSize * 0.65);
+            const falloff = 1 - edge * edge;
+            const a = (brushPreset?.opacity ?? 0.65) * (0.18 + 0.55 * Math.random()) * falloff;
+            ctx.globalAlpha = Math.min(1, a);
+            const dotR = Math.max(0.5, baseSize * 0.06 + Math.random() * (baseSize * 0.22));
+            ctx.beginPath();
+            ctx.fillStyle = activeColor;
+            ctx.arc(gx, gy, dotR, 0, Math.PI * 2);
+            ctx.fill();
+            // Halo suave: trazo semitransparente grande para cohesión
+            if (Math.random() < 0.07) {
+              ctx.globalAlpha = a * 0.25;
+              ctx.beginPath();
+              ctx.arc(gx, gy, dotR * (2 + Math.random() * 2), 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+        }
+        ctx.globalAlpha = 1;
+        strokeProgressRef.current += dist;
+        return;
+      } else if (brushPreset?.texture === 'marker') {
+        // Simulación marcador: ancho constante, relleno múltiple de pasadas semi-opacas con leve ruido perpendicular
+        const passes = 3;
+        const width = Math.max(1, baseSize * 0.85);
+        const dirX = to.x - from.x;
+        const dirY = to.y - from.y;
+        const len = Math.hypot(dirX, dirY) || 1;
+        const nx = -dirY / len; // normal
+        const ny = dirX / len;
+        for (let p = 0; p < passes; p++) {
+          const offset = ((p - (passes - 1) / 2) / (passes)) * (width * 0.5);
+          ctx.globalAlpha = opacityMul * (0.55 + 0.25 * Math.random());
+          ctx.strokeStyle = activeColor;
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          ctx.lineWidth = width * (0.92 + Math.random() * 0.1);
+          ctx.beginPath();
+          const jf = jitterPoint({ x: from.x + nx * offset, y: from.y + ny * offset });
+          const jt = jitterPoint({ x: to.x + nx * offset, y: to.y + ny * offset });
+          ctx.moveTo(jf.x, jf.y);
+          ctx.lineTo(jt.x, jt.y);
+          ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+        strokeProgressRef.current += dist;
+        return;
+      } else {
+        const p0 = jitterPoint(from);
+        const p1 = jitterPoint(to);
+        ctx.globalAlpha = opacityMul;
+        ctx.strokeStyle = activeColor;
+  const pressureScale = simulatedPressure * taperFactor;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = Math.max(0.5, baseSize * 0.4 + baseSize * 0.6 * pressureScale);
+        ctx.beginPath();
+        ctx.moveTo(p0.x, p0.y);
+        ctx.lineTo(p1.x, p1.y);
+        ctx.stroke();
+        strokeProgressRef.current += dist;
+        ctx.globalAlpha = 1;
+      }
+    };
+
+  // Old mouse handlers removed; pointer events unify behavior
+
+    // Single-finger: pan (no drawing). Two-finger: pinch zoom. Pen stylus: drawing.
+    const panState = useRef<{ x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null);
+
+  // Helper removed (no touch drawing with stylus now)
+
+  // Touch events: let the browser handle scrolling for finger pan; no drawing on touch
+  const handleTouchStart = (_e: React.TouchEvent<HTMLCanvasElement>) => {};
+  const handleTouchMove = (_e: React.TouchEvent<HTMLCanvasElement>) => {};
+  const handleTouchEnd = (_e: React.TouchEvent<HTMLCanvasElement>) => {};
+
+  const floodFill = (x: number, y: number) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      const dpr = window.devicePixelRatio || 1;
+  const w = canvas.width; // device px
+  const h = canvas.height;
+      // Logical -> device pixel coords
+      const sx = Math.floor(x * dpr);
+      const sy = Math.floor(y * dpr);
+      if (sx < 0 || sy < 0 || sx >= w || sy >= h) return;
+
+      const imageData = ctx.getImageData(0, 0, w, h);
+      const data = imageData.data; // Uint8ClampedArray
+      const idx = (sy * w + sx) * 4;
+      const targetR = data[idx];
+      const targetG = data[idx + 1];
+      const targetB = data[idx + 2];
+      const targetA = data[idx + 3];
+
+  const [fillR, fillG, fillB] = hexToRgbTuple(activeColor);
+  const opacityMul = Math.max(0, Math.min(1, brushPreset?.opacity ?? 1));
+      const near = (a: number, b: number, tol: number) => Math.abs(a - b) <= tol;
+      const T = 16; // antialiasing tolerance
+      const matchesTarget = (i: number) => near(data[i], targetR, T) && near(data[i + 1], targetG, T) && near(data[i + 2], targetB, T) && near(data[i + 3], targetA, T);
+
+      // Build region mask via scanline flood fill
+      const mask = new Uint8Array(w * h);
+      let minX = sx, maxX = sx, minY = sy, maxY = sy;
+      const stack: Array<[number, number]> = [[sx, sy]];
+      while (stack.length) {
+        const [px, py] = stack.pop()!;
+        let nx = px;
+        let m = py * w + nx;
+        let i = m * 4;
+        // move left to span start
+        while (nx >= 0 && !mask[m] && matchesTarget(i)) {
+          nx--;
+          m--;
+          i -= 4;
+        }
+        nx++;
+        m++;
+        i += 4;
+        let spanUp = false;
+        let spanDown = false;
+        while (nx < w && !mask[m] && matchesTarget(i)) {
+          // mark mask
+          mask[m] = 1;
+          if (nx < minX) minX = nx; if (nx > maxX) maxX = nx;
+          if (py < minY) minY = py; if (py > maxY) maxY = py;
+          // scan up
+          if (py > 0) {
+            const am = m - w; const ai = i - w * 4;
+            if (!spanUp && !mask[am] && matchesTarget(ai)) {
+              stack.push([nx, py - 1]);
+              spanUp = true;
+            } else if (spanUp && (mask[am] || !matchesTarget(ai))) {
+              spanUp = false;
+            }
+          }
+          // scan down
+          if (py < h - 1) {
+            const bm = m + w; const bi = i + w * 4;
+            if (!spanDown && !mask[bm] && matchesTarget(bi)) {
+              stack.push([nx, py + 1]);
+              spanDown = true;
+            } else if (spanDown && (mask[bm] || !matchesTarget(bi))) {
+              spanDown = false;
+            }
+          }
+          nx++;
+          m++;
+          i += 4;
+        }
+      }
+
+      // Early out if trivial
+      if (minX > maxX || minY > maxY) return;
+
+      // Relleno simple monocolor para mangaPen (pixel blending)
+      const blendPixel = (di: number, a: number) => {
+        const inv = 1 - a;
+        const dr = data[di];
+        const dg = data[di + 1];
+        const db = data[di + 2];
+        const da = data[di + 3] / 255;
+        const outA = a + da * inv;
+        const outR = Math.round(fillR * a + dr * inv);
+        const outG = Math.round(fillG * a + dg * inv);
+        const outB = Math.round(fillB * a + db * inv);
+        data[di] = outR;
+        data[di + 1] = outG;
+        data[di + 2] = outB;
+        data[di + 3] = Math.round(outA * 255);
+      };
+      
+      // If a brush texture is active, synthesize a textured fill instead of flat pixels
+      const texture = brushPreset?.texture ?? 'none';
+      const bboxW = maxX - minX + 1; // device px
+      const bboxH = maxY - minY + 1;
+      const baseSize = Math.max(1, Math.floor(brushSize * dpr));
+      const drawSolidFill = () => {
+        for (let y0 = minY; y0 <= maxY; y0++) {
+          let m = y0 * w + minX; let di = m * 4;
+          for (let x0 = minX; x0 <= maxX; x0++, m++, di += 4) {
+            if (!mask[m]) continue;
+            if (opacityMul >= 0.999) { data[di] = fillR; data[di + 1] = fillG; data[di + 2] = fillB; data[di + 3] = 255; }
+            else blendPixel(di, opacityMul);
+          }
+        }
+        ctx.putImageData(imageData, 0, 0);
+      };
+
+      if (texture === 'none') {
+        drawSolidFill();
+        return;
+      }
+
+      // Offscreen texture buffer in device pixels
+      const off = document.createElement('canvas');
+      off.width = bboxW; off.height = bboxH;
+      const octx = off.getContext('2d');
+      if (!octx) { drawSolidFill(); return; }
+
+      // Common helpers for textured fill
+      const rand = Math.random;
+      const drawDot = (xPx: number, yPx: number, rPx: number, a: number) => {
+        if (rPx <= 0) return;
+        octx.globalAlpha = Math.max(0, Math.min(1, a));
+        octx.fillStyle = activeColor;
+        octx.beginPath();
+        octx.arc(xPx + 0.5, yPx + 0.5, rPx, 0, Math.PI * 2);
+        octx.fill();
+      };
+
+      // 1) Charcoal: scatter grains and soft halos inside mask
+      const fillCharcoal = () => {
+        const area = bboxW * bboxH;
+        const density = Math.max(600, Math.min(8000, Math.floor(area / 140))); // tuned for 480x640
+        const grains = Math.floor(density * (0.6 + 0.8 * (brushPreset?.density ?? 1)));
+        const maxR = Math.max(1, Math.floor(baseSize * 0.22));
+        for (let g = 0; g < grains; g++) {
+          const rx = minX + Math.floor(rand() * bboxW);
+          const ry = minY + Math.floor(rand() * bboxH);
+          if (!mask[ry * w + rx]) continue;
+          const rr = Math.max(1, Math.floor(0.5 + rand() * maxR));
+          const edge = rr / (maxR + 0.0001);
+          const falloff = 1 - edge * edge;
+          const a = (brushPreset?.opacity ?? 0.65) * (0.25 + 0.55 * rand()) * falloff * opacityMul;
+          drawDot(rx - minX, ry - minY, rr, a);
+          if (rand() < 0.06) {
+            octx.globalAlpha = a * 0.22;
+            octx.beginPath();
+            octx.arc(rx - minX + 0.5, ry - minY + 0.5, rr * (2 + rand() * 2), 0, Math.PI * 2);
+            octx.fill();
+          }
+        }
+        octx.globalAlpha = 1;
+      };
+
+      // 2) Marker: multiple parallel strokes with slight jitter, clipped to mask
+      const fillMarker = () => {
+        const passes = 3;
+        const widthPx = Math.max(2, Math.floor(baseSize * 0.85));
+        for (let p = 0; p < passes; p++) {
+          const offset = Math.floor(((p - (passes - 1) / 2) / (passes)) * (widthPx * 0.5));
+          for (let y0 = 0; y0 < bboxH; y0++) {
+            const yy = y0 + offset;
+            if (yy < 0 || yy >= bboxH) continue;
+            // scan segments where mask is on for this scanline
+            let x = 0;
+            while (x < bboxW) {
+              // advance to start of mask
+              while (x < bboxW && !mask[(minY + yy) * w + (minX + x)]) x++;
+              if (x >= bboxW) break;
+              const start = x;
+              while (x < bboxW && mask[(minY + yy) * w + (minX + x)]) x++;
+              const end = x;
+              octx.globalAlpha = opacityMul * (0.55 + 0.25 * rand());
+              octx.strokeStyle = activeColor;
+              octx.lineCap = 'round';
+              octx.lineJoin = 'round';
+              octx.lineWidth = Math.max(2, widthPx * (0.92 + rand() * 0.1));
+              octx.beginPath();
+              // small perpendicular jitter
+              const j = Math.floor((rand() - 0.5) * Math.max(1, widthPx * 0.15));
+              octx.moveTo(start, yy + j);
+              octx.lineTo(end, yy + j);
+              octx.stroke();
+            }
+          }
+        }
+        octx.globalAlpha = 1;
+      };
+
+      // 3) Pencil/Rough: fine grains with subtle randomness
+      const fillPencil = () => {
+        const area = bboxW * bboxH;
+        // fewer grains than charcoal
+        const grains = Math.max(500, Math.min(5000, Math.floor(area / 260)));
+        for (let g = 0; g < grains; g++) {
+          const rx = minX + Math.floor(rand() * bboxW);
+          const ry = minY + Math.floor(rand() * bboxH);
+          if (!mask[ry * w + rx]) continue;
+          const rr = Math.max(0.5, baseSize * (0.06 + rand() * 0.12));
+          const a = opacityMul * (0.20 + 0.55 * rand());
+          drawDot(rx - minX, ry - minY, rr, a);
+        }
+        octx.globalAlpha = 1;
+      };
+
+      switch (texture) {
+        case 'charcoal':
+          fillCharcoal();
+          break;
+        case 'marker':
+          fillMarker();
+          break;
+        case 'pencil':
+        case 'rough':
+          fillPencil();
+          break;
+        default:
+          drawSolidFill();
+          return;
+      }
+
+      // Composite offscreen texture onto main imageData (device px) using alpha blend per pixel
+      const tex = octx.getImageData(0, 0, bboxW, bboxH);
+      const tdata = tex.data;
+      // Blend texture over existing pixels only where mask is set
+      for (let y0 = 0; y0 < bboxH; y0++) {
+        let m = (minY + y0) * w + minX;
+        let di = m * 4;
+        let ti = y0 * bboxW * 4;
+        for (let x0 = 0; x0 < bboxW; x0++, m++, di += 4, ti += 4) {
+          if (!mask[m]) continue;
+          const a = (tdata[ti + 3] || 0) / 255;
+          if (a <= 0) continue;
+          blendPixel(di, a);
+        }
+      }
+      ctx.putImageData(imageData, 0, 0);
+    };
+
+    const beginStroke = (pos: {x:number;y:number}, erase: boolean) => {
+      // Snapshot once per mutation
+      onBeforeMutate?.();
+      strokeProgressRef.current = 0;
+      lastPointRef.current = pos;
+      eraseRef.current = erase;
+  // Reset smoothing buffer para no enlazar con stroke previo
+  smoothBuffer.current = [{...pos, t: performance.now(), pressure: 0.5}];
+      firstMoveRef.current = true; // primera mov después de pointerDown se salta
+      strokeStartPosRef.current = pos;
+      setIsDrawing(!erase);
+    };
+
+    const endStroke = () => {
+      // Si no hubo movimiento (tap) dibujamos un punto corto
+      if (firstMoveRef.current && strokeStartPosRef.current && !eraseRef.current) {
+        const p = strokeStartPosRef.current;
+        // Dibujar un punto mínimo reutilizando drawLine (desplazamiento ínfimo)
+        drawLine(p, {x: p.x + 0.01, y: p.y + 0.01}, 0.7);
+      }
+      setIsDrawing(false);
+      lastPointRef.current = null;
+      eraseRef.current = false;
+  // Mark dirty at end of stroke to ensure persistence captures final state
+  onDirty?.();
+      firstMoveRef.current = false;
+      strokeStartPosRef.current = null;
+    };
+
+    const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+      if (disabled) return;
+      
+      // Si ya estamos dibujando con otro puntero, ignorar nuevos punteros (evitar pan + draw simultáneos)
+      if ((penActionRef.current === 'draw' || penActionRef.current === 'erase') && activeDrawPointerIdRef.current !== e.pointerId) {
+        return;
+      }
+
+      // Capturar el pointer solo para mouse/pen, nunca para touch (gestión propia de pan)
+      if (e.pointerType !== 'touch') {
+        (e.target as HTMLCanvasElement).setPointerCapture(e.pointerId);
+      }
+      
+      // Clear any previous action
+      penActionRef.current = null;
+      panState.current = null;
+      
+  const container = containerRef.current!;
+  const native = e.nativeEvent as PointerEvent & { offsetX: number; offsetY: number };
+  const pos = { x: native.offsetX / zoom, y: native.offsetY / zoom };
+      const buttons = e.buttons;
+
+      // Fill tool: perform on primary click with mouse/pen. Touch remains pan-only by design.
+  if (tool === 'fill' && e.pointerType !== 'touch') {
+        if ((e.pointerType === 'mouse' && (buttons & 1)) || (e.pointerType === 'pen' && (buttons & 1))) {
+      onBeforeMutate?.();
+      floodFill(pos.x, pos.y);
+      // Mark dirty after fill to persist
+      onDirty?.();
+          return; // no drawing state, single action
+        }
+      }
+      
+      if (e.pointerType === 'pen') {
+        // Priority order: eraser > drawing > panning
+        if ((buttons & 32) || (buttons & 4) || tool === 'erase') { // eraser button or middle button or active erase tool
+          penActionRef.current = 'erase';
+          activeDrawPointerIdRef.current = e.pointerId;
+          beginStroke(pos, true);
+        } else if (buttons & 1) { // pen tip (primary button) - drawing has priority over barrel button
+          penActionRef.current = 'draw';
+          activeDrawPointerIdRef.current = e.pointerId;
+          beginStroke(pos, false);
+        } else if (buttons & 2) { // barrel button only (secondary button) - pan only when not drawing
+          penActionRef.current = 'pan';
+          activePanPointerIdRef.current = e.pointerId;
+          panState.current = { x: e.clientX, y: e.clientY, scrollLeft: container.scrollLeft, scrollTop: container.scrollTop };
+        }
+      } else if (e.pointerType === 'mouse') {
+        if (buttons & 2) { // right button - pan
+          penActionRef.current = 'pan';
+          activePanPointerIdRef.current = e.pointerId;
+          panState.current = { x: e.clientX, y: e.clientY, scrollLeft: container.scrollLeft, scrollTop: container.scrollTop };
+    } else if (buttons & 1) { // left button - draw/erase based on tool
+          if (tool === 'erase') {
+            penActionRef.current = 'erase';
+      activeDrawPointerIdRef.current = e.pointerId;
+            beginStroke(pos, true);
+          } else {
+            penActionRef.current = 'draw';
+            activeDrawPointerIdRef.current = e.pointerId;
+            beginStroke(pos, false);
+          }
+        }
+      } else if (e.pointerType === 'touch') {
+        // Si ya se está dibujando con pen/mouse, ignorar pan táctil
+        if (penActionRef.current === 'draw' || penActionRef.current === 'erase') return;
+        // Pan con un dedo (sin dibujar)
+        penActionRef.current = 'pan';
+        activePanPointerIdRef.current = e.pointerId;
+        panState.current = { x: e.clientX, y: e.clientY, scrollLeft: container.scrollLeft, scrollTop: container.scrollTop };
+      }
+    };
+
+    // One-time restore of provided image
+    const restoredRef = useRef(false);
+    useEffect(() => {
+      if (restoredRef.current) return;
+      if (!restoreImage) return;
+      const canvas = canvasRef.current; if (!canvas) return;
+      const ctx = canvas.getContext('2d'); if (!ctx) return;
+      const img = new Image();
+      img.onload = () => {
+        const dpr = Math.min(3, window.devicePixelRatio || 1);
+        const logicalW = canvas.width / dpr;
+        const logicalH = canvas.height / dpr;
+        ctx.save();
+        ctx.setTransform(1,0,0,1,0,0);
+        ctx.scale(dpr, dpr);
+    // Always paint a solid white underlay to avoid transparent regions when restoring
+    ctx.clearRect(0,0,logicalW,logicalH);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0,0,logicalW,logicalH);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.drawImage(img, 0, 0, logicalW, logicalH);
+        ctx.restore();
+        restoredRef.current = true;
+      };
+      img.src = restoreImage;
+    }, [restoreImage]);
+
+    const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+      if (disabled) return;
+  if (!penActionRef.current) return;
+      
+      const container = containerRef.current!;
+      
+  // Handle panning - only when explicitly in pan mode and for the same pointer
+  if (penActionRef.current === 'pan' && panState.current && activePanPointerIdRef.current === e.pointerId) {
+        const dx = e.clientX - panState.current.x;
+        const dy = e.clientY - panState.current.y;
+        container.scrollLeft = panState.current.scrollLeft - dx;
+        container.scrollTop = panState.current.scrollTop - dy;
+        return; // Early return to prevent any drawing action
+      }
+      
+      // Handle drawing/erasing - only when explicitly in draw or erase mode
+  if ((penActionRef.current === 'draw' || penActionRef.current === 'erase') && lastPointRef.current && activeDrawPointerIdRef.current === e.pointerId) {
+        const native = e.nativeEvent as PointerEvent & { offsetX: number; offsetY: number };
+        const pos = { x: native.offsetX / zoom, y: native.offsetY / zoom };
+        
+        const nativePressure = (e.nativeEvent as any).pressure as number | undefined;
+        const pressure = typeof nativePressure === 'number' ? nativePressure : 0;
+        if (penActionRef.current === 'erase') {
+          const ctx = canvasRef.current?.getContext('2d');
+          if (ctx) {
+            // Preserve opaque white base by painting with white instead of punching transparency
+            ctx.save();
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = brushSize;
+            ctx.beginPath();
+            ctx.moveTo(lastPointRef.current.x, lastPointRef.current.y);
+            ctx.lineTo(pos.x, pos.y);
+            ctx.stroke();
+            ctx.restore();
+          }
+        } else {
+          // Saltar la primera actualización para evitar segmento conectivo inmediato
+          if (firstMoveRef.current) {
+            firstMoveRef.current = false;
+            smoothBuffer.current.push({ ...pos, t: performance.now(), pressure });
+            if (smoothBuffer.current.length > 6) smoothBuffer.current.shift();
+            lastPointRef.current = pos; // solo actualizar referencia
+            return;
+          }
+          // Smoothing: añadimos al buffer y usamos el punto anterior suavizado
+          smoothBuffer.current.push({ ...pos, t: performance.now(), pressure });
+          if (smoothBuffer.current.length > 6) smoothBuffer.current.shift();
+          const pts = smoothBuffer.current;
+          let fromPt = lastPointRef.current;
+          let toPt = pos;
+          if (pts.length >= 3) {
+            // simple Chaikin midpoint smoothing
+            const a = pts[pts.length - 3];
+            const b = pts[pts.length - 2];
+            const c = pts[pts.length - 1];
+            const mid1 = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+            const mid2 = { x: (b.x + c.x) / 2, y: (b.y + c.y) / 2 };
+            fromPt = mid1;
+            toPt = mid2;
+          }
+          drawLine(fromPt, toPt, pressure);
+        }
+        lastPointRef.current = pos;
+      }
+    };
+
+    const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+      // Liberar la captura del pointer (si no es touch)
+      if (e.pointerType !== 'touch') {
+        (e.target as HTMLCanvasElement).releasePointerCapture(e.pointerId);
+      }
+      
+      // Clean up based on current action
+      if (penActionRef.current === 'pan' && activePanPointerIdRef.current === e.pointerId) {
+        panState.current = null;
+        activePanPointerIdRef.current = null;
+      } else if (penActionRef.current === 'draw' || penActionRef.current === 'erase') {
+        if (activeDrawPointerIdRef.current === e.pointerId) {
+          endStroke();
+          activeDrawPointerIdRef.current = null;
+        }
+      }
+      
+      // Clear action only if the finishing pointer matches
+      if (penActionRef.current && ((penActionRef.current === 'pan' && activePanPointerIdRef.current === null) || (penActionRef.current !== 'pan' && activeDrawPointerIdRef.current === null))) {
+        penActionRef.current = null;
+      }
+    };
+
+  // Eliminado bloqueo global; confiamos en touch-action local del canvas para evitar desplazamientos.
+
+    return (
+      <div
+        ref={containerRef}
+        className="relative border rounded-lg bg-white inline-block overflow-hidden"
+        style={{ width: displaySize.w, height: displaySize.h }}
+      >
+        <div
+          className="relative"
+          style={{ width: displaySize.w * zoom, height: displaySize.h * zoom }}
+        >
+          {onionImage && (
+            <img
+              src={onionImage}
+              alt="previous frame"
+              className="absolute inset-0 pointer-events-none"
+              style={{ width: '100%', height: '100%', objectFit: 'fill', opacity: 1 }}
+            />
+          )}
+          <canvas
+            ref={canvasRef}
+            className={`${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-crosshair'} absolute inset-0 bg-white select-none transition-opacity`}
+            data-drawing={isDrawing ? 'true' : 'false'}
+            style={{
+              width: '100%',
+              height: '100%',
+              touchAction: 'none',
+              opacity: onionImage ? (1 - Math.max(0, Math.min(1, onionOpacity))) : 1
+            }}
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerLeave={handlePointerUp}
+            onContextMenu={(e) => e.preventDefault()}
+          />
+        </div>
+        {disabled && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+            <p className="text-white font-semibold text-lg">Start session to draw</p>
+          </div>
+        )}
+      </div>
+    );
+  }
 );

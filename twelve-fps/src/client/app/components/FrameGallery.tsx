@@ -3,8 +3,14 @@ import type { Frame } from '../RootApp';
 import { User, Calendar, ArrowBigUp, ArrowBigDown } from 'lucide-react';
 import { allBrushPresets, type BrushPreset } from '../brushes';
 
-interface FrameGalleryProps { frames: Frame[]; initialVotes?: Record<string, { up:number; down:number; my:-1|0|1 }>; activeBrushIds?: string[]; }
-export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, initialVotes, activeBrushIds }) => {
+interface FrameGalleryProps {
+  frames: Frame[];
+  initialVotes?: Record<string, { up:number; down:number; my:-1|0|1 }>;
+  activeBrushIds?: string[];
+  // Optional in-progress frame not yet finalized (data URL + startedAt timestamp)
+  pendingFrame?: { imageData: string; startedAt: number } | null;
+}
+export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, initialVotes, activeBrushIds, pendingFrame }) => {
   const [openWeeks, setOpenWeeks] = useState<Record<number, boolean>>({});
   const [votes, setVotes] = useState<Record<string, { up: number; down: number; my: -1|0|1 }>>({});
   const [isMod, setIsMod] = useState(false);
@@ -157,7 +163,7 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, initialVotes
                             <span key={i} className="w-3 h-3 rounded-sm border border-white/30" style={{ backgroundColor: c }} />
                           ))}
                         </div>
-            <span className="text-white/60 text-[10px]">Theme: {theme} • Brushes: {names}</span>
+            <span className="text-white/60 text-[10px]">Theme: {theme} ΓÇó Brushes: {names}</span>
                       </>
                     );
                   })()}
@@ -167,6 +173,20 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, initialVotes
             </button>
             {openWeeks[week] && (
               <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-6 gap-3 pt-1">
+                {pendingFrame && (
+                  <div key="pending" className="relative bg-amber-500/15 border border-amber-300/40 rounded-xl overflow-hidden backdrop-blur-sm animate-pulse">
+                    <div className="absolute top-1 left-1 z-10 px-1.5 py-0.5 rounded-md text-[9px] font-semibold tracking-wide bg-amber-400 text-black">WIP</div>
+                    <div className="aspect-[480/640] flex items-center justify-center bg-black/30">
+                      <img src={pendingFrame.imageData} alt="Pending frame" className="w-full h-full object-contain" />
+                    </div>
+                    <div className="p-2 flex flex-col gap-0.5">
+                      <span className="text-[10px] text-amber-200 font-semibold">In Progress</span>
+                      <span className="text-[9px] text-amber-300/70">
+                        {new Date(pendingFrame.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                  </div>
+                )}
                 {[...sorted].reverse().map((frame)=>{
                   const index = frames.indexOf(frame);
                   const imgSrc = (frame as any).imageData || (frame as any).url;
