@@ -30,7 +30,11 @@ function clientFrom(env:any){
   });
 }
 
-const KEY = 'pending/latest.png';
+function keyForUser(user?:string){
+  if(!user) return 'pending/latest.png';
+  const safe = user.replace(/[^a-zA-Z0-9_\-:.]/g,'_');
+  return `pending/${safe}.png`;
+}
 
 export default async function handler(req:any,res:any){
   cors(res);
@@ -40,6 +44,8 @@ export default async function handler(req:any,res:any){
     const client = clientFrom(env);
 
     if(req.method==='GET'){
+      const user = (req.query && (req.query.user||req.query.u)) || undefined;
+      const KEY = keyForUser(user as string|undefined);
       try {
         const head = await client.send(new HeadObjectCommand({ Bucket: env.bucket, Key: KEY }));
         const lm = head.LastModified ? new Date(head.LastModified).getTime() : null;
@@ -55,7 +61,8 @@ export default async function handler(req:any,res:any){
     }
 
     if(req.method==='POST'){
-      const { dataUrl } = req.body || {};
+      const { dataUrl, user } = req.body || {};
+      const KEY = keyForUser(user);
       if(typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/png;base64,')){
         return res.status(400).json({ error:'Invalid dataUrl'});
       }
@@ -80,6 +87,8 @@ export default async function handler(req:any,res:any){
     }
 
     if(req.method==='DELETE'){
+      const user = (req.query && (req.query.user||req.query.u)) || undefined;
+      const KEY = keyForUser(user as string|undefined);
       try { await client.send(new DeleteObjectCommand({ Bucket: env.bucket, Key: KEY })); } catch {}
       return res.status(200).json({ ok:true, deleted: KEY });
     }

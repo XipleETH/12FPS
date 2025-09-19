@@ -7,32 +7,21 @@ interface FrameGalleryProps {
   frames: Frame[];
   pendingFrame?: { imageData: string; startedAt: number } | null;
   initialVotes?: Record<string, { up: number; down: number; my: -1|0|1 }>;
-  // Active brushes for the current week (winners or defaults)
-  activeBrushIds?: string[];
+  activeBrushIds?: string[]; // Weekly active brushes (winners)
+  showModeration?: boolean;  // Force show moderation panel (override auto-detect)
 }
 
-export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame, initialVotes, activeBrushIds }) => {
+export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame, initialVotes, activeBrushIds, showModeration }) => {
   const [openWeeks, setOpenWeeks] = useState<Record<number, boolean>>({});
   const [votes, setVotes] = useState<Record<string, { up: number; down: number; my: -1|0|1 }>>({});
-  const toggleWeek = useCallback((week:number)=>{
-    setOpenWeeks(o=>({...o,[week]:!o[week]}));
-  },[]);
-  const formatDate = (timestamp: number) => {
-    return new Date(timestamp).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
+  const [isMod, setIsMod] = useState(false);
+  const [modFrames, setModFrames] = useState<any[]>([]);
+  const toggleWeek = useCallback((week:number)=>{ setOpenWeeks(o=>({...o,[week]:!o[week]})); },[]);
+  const formatDate = (timestamp: number) => new Date(timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-  // Initialize votes from prop or fetch once for richer data
+  // Seed votes from incoming frames or fetch list once
   useEffect(()=>{
-    if (initialVotes) {
-      setVotes({ ...initialVotes });
-      return;
-    }
-    // Best-effort fetch to seed votes for existing frames
+    if (initialVotes) { setVotes({ ...initialVotes }); return; }
     (async ()=>{
       try {
         const r = await fetch('/api/list-frames');
@@ -41,23 +30,46 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
         const acc: Record<string, { up:number; down:number; my:-1|0|1 }> = {};
         for (const f of (j.frames||[])) {
           const k = f.key || f.id; if (!k) continue;
-          if (typeof f.votesUp === 'number' || typeof f.votesDown === 'number' || typeof f.myVote === 'number') {
+          if (f.votesUp != null || f.votesDown != null || f.myVote != null) {
             acc[k] = { up: f.votesUp||0, down: f.votesDown||0, my: (f.myVote ?? 0) as (-1|0|1) };
           }
         }
         if (Object.keys(acc).length) setVotes(acc);
-      } catch {}
+      } catch {/* ignore */}
     })();
   }, [initialVotes]);
+
+  // Moderation queue auto-detect
+  useEffect(()=>{ (async ()=>{
+    if (showModeration === false) { setIsMod(false); return; }
+    try {
+      const me = await fetch('/api/mod/me');
+      if (me.ok) {
+        const j = await me.json();
+        // showModeration true forces panel; otherwise rely on server response j.isMod
+        if (showModeration === true || j.isMod) {
+          setIsMod(true);
+          const r = await fetch('/api/mod/frames');
+          if (r.ok) { const mj = await r.json(); setModFrames(mj.frames||[]); }
+        }
+      }
+    } catch {/* ignore */}
+  })(); }, [showModeration]);
+
+  const restoreFrame = useCallback(async (key:string)=>{
+    try { const r = await fetch(`/api/mod/frames/${encodeURIComponent(key)}/restore`, { method:'POST' }); if (r.ok){ setModFrames(m=>m.filter(x=>x.key!==key)); } } catch {}
+  },[]);
+  const deleteFrame = useCallback(async (key:string)=>{
+    try { const r = await fetch(`/api/mod/frames/${encodeURIComponent(key)}`, { method:'DELETE' }); if (r.ok){ setModFrames(m=>m.filter(x=>x.key!==key)); } } catch {}
+  },[]);
 
   const vote = useCallback(async (key:string, dir: -1|0|1)=>{
     try {
       const res = await fetch(`/api/frame-vote`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, dir }) });
       if (!res.ok) return;
       const j = await res.json();
-      // If server flagged it, optimistically drop its votes (it will disappear on next poll in App)
       setVotes(v => ({ ...v, [key]: { up: j.votesUp ?? 0, down: j.votesDown ?? 0, my: (j.myVote ?? 0) as (-1|0|1) } }));
-    } catch {}
+    } catch {/* ignore */}
   }, []);
 
   // Dedupe: if pending frame image matches the last published frame image, suppress it
@@ -70,17 +82,15 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
     }
   }
 
-  if (frames.length === 0 && !showPending) {
-    return (
-      <div className="text-center py-16">
-        <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-12 border border-white/20 max-w-md mx-auto">
-          <h3 className="text-2xl font-bold text-white mb-4">No frames yet</h3>
-          <p className="text-white/70 mb-6">Start drawing to create your first frame and contribute to the collaborative video.</p>
-          <div className="w-24 h-24 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full mx-auto opacity-20" />
-        </div>
+  if (frames.length === 0 && !showPending) return (
+    <div className="text-center py-16">
+      <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-12 border border-white/20 max-w-md mx-auto">
+        <h3 className="text-2xl font-bold text-white mb-4">No frames yet</h3>
+        <p className="text-white/70 mb-6">Start drawing to create your first frame and contribute to the collaborative video.</p>
+        <div className="w-24 h-24 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full mx-auto opacity-20" />
       </div>
-    );
-  }
+    </div>
+  );
 
   // Group frames by paletteWeek
   const grouped = useMemo(()=>{
@@ -95,11 +105,40 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
 
   return (
       <div className="space-y-10">
+        {isMod && (
+          <div className="bg-amber-500/10 border border-amber-400/30 rounded-xl p-3">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-amber-200 text-sm font-semibold">Moderation Queue</h3>
+              <span className="text-amber-200/70 text-xs">{modFrames.length} flagged</span>
+            </div>
+            {modFrames.length===0 ? (
+              <div className="text-amber-200/70 text-xs">Queue is empty.</div>
+            ) : (
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
+                {modFrames.map(mf=> (
+                  <div key={mf.key} className="bg-white/5 border border-white/10 rounded-lg overflow-hidden">
+                    <div className="aspect-[480/640] bg-black/40">
+                      <img src={mf.url} alt={mf.key} className="w-full h-full object-contain" />
+                    </div>
+                    <div className="p-2">
+                      <div className="flex items-center justify-between text-[10px] text-white/70">
+                        <span className="truncate max-w-[80px]">{mf.artist}</span>
+                        <span>{(mf.votesUp||0) - (mf.votesDown||0)}</span>
+                      </div>
+                      <div className="mt-1 flex gap-2">
+                        <button onClick={()=>restoreFrame(mf.key)} className="flex-1 text-emerald-300 hover:text-emerald-200 text-[10px]">Restore</button>
+                        <button onClick={()=>deleteFrame(mf.key)} className="flex-1 text-red-300 hover:text-red-200 text-[10px]">Delete</button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <div className="text-center">
           <h2 className="text-4xl font-bold text-white mb-2">Frame Gallery</h2>
-          <p className="text-white/70 text-sm sm:text-base">
-            {frames.length} frames published{showPending ? ' • 1 in progress' : ''}
-          </p>
+          <p className="text-white/70 text-sm sm:text-base">{frames.length} frames published{showPending ? ' • 1 in progress' : ''}</p>
         </div>
 
   {showPending && pendingFrame && (
