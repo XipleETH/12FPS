@@ -1,5 +1,10 @@
 // Engines disponibles
-export type BrushEngine = 'mangaPen' | 'pencil';
+// Engines disponibles:
+//  - mangaPen: vector-like entintado con taper y jitter
+//  - pencil: (antiguo) granular; ahora usado por 'lapicero' (fino) y 'charcoal'
+//  - wash: simulación de manchas semitransparentes (acuarela)
+//  - acrylic: pincel opaco con ligera textura y borde suave
+export type BrushEngine = 'mangaPen' | 'pencil' | 'wash' | 'acrylic';
 
 export type BrushStyle = 'anime' | 'comic' | 'watercolor' | 'graffiti';
 
@@ -15,7 +20,7 @@ export interface BrushPreset {
   density?: number; // spray particles density multiplier
   particleSize?: [number, number]; // spray particle radius range in px
   drip?: boolean; // graffiti drip effect for spray
-  texture?: 'pencil' | 'marker' | 'rough' | 'charcoal' | 'none';
+  texture?: 'pencil' | 'marker' | 'rough' | 'charcoal' | 'wash' | 'acrylic' | 'none';
 }
 
 // Preset inicial del pincel de tinta manga: líneas nítidas con ligera variación
@@ -31,6 +36,17 @@ export const brushKits: Record<BrushStyle, BrushPreset[]> = {
       taper: 0.65, // afinado final
       jitter: 0.02, // mínima vibración orgánica
       texture: 'none'
+    },
+    {
+      id: 'acrilico',
+      name: 'Acrílico',
+      engine: 'acrylic',
+      size: 10,
+      opacity: 0.95,
+      taper: 0.15,
+      jitter: 0.04,
+      hardness: 0.7,
+      texture: 'acrylic'
     }
   ],
   comic: [
@@ -58,15 +74,26 @@ export const brushKits: Record<BrushStyle, BrushPreset[]> = {
   ],
   watercolor: [
     {
-      id: 'pencil',
-      name: 'Pencil',
+      id: 'acuarela',
+      name: 'Acuarela',
+      engine: 'wash',
+      size: 18,
+      opacity: 0.35,
+      taper: 0.4,
+      jitter: 0.1,
+      hardness: 0.3,
+      texture: 'wash'
+    },
+    {
+      id: 'lapicero',
+      name: 'Lapicero',
       engine: 'pencil',
-      size: 8,
-      opacity: 0.55,
-      taper: 0.2,
-      jitter: 0.08,
-      hardness: 0.6,
-      texture: 'rough'
+      size: 5,
+      opacity: 0.8,
+      taper: 0.5,
+      jitter: 0.06,
+      hardness: 0.8,
+      texture: 'pencil'
     }
   ],
   graffiti: [],

@@ -152,19 +152,38 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
 				return;
 			}
 			if (brushMode === 'solid') {
-				const p0 = jitterPoint(from);
-				const p1 = jitterPoint(to);
-				const progress = strokeProgressRef.current;
-				const taperFactor = 1 - taper * Math.min(1, progress / (200 + brushSize * 20));
-				ctx.globalAlpha = opacityMul;
-				ctx.strokeStyle = activeColor;
-				ctx.lineWidth = Math.max(0.5, brushSize * taperFactor);
-				ctx.beginPath();
-				ctx.moveTo(p0.x, p0.y);
-				ctx.lineTo(p1.x, p1.y);
-				ctx.stroke();
-				ctx.globalAlpha = 1;
-				return;
+					// Enhanced dual taper: pointed start & heuristic pointed end
+					const p0 = jitterPoint(from);
+					const p1 = jitterPoint(to);
+					const progress = strokeProgressRef.current;
+					// Classic progressive taper (reduces over stroke length)
+					const classicTaper = 1 - taper * Math.min(1, progress / (200 + brushSize * 20));
+					// Start ramp (fade in)
+					const fadeLen = Math.max(12, brushSize * 3);
+					const startFactor = Math.min(1, progress / fadeLen);
+					// Heuristic end ramp: if stroke already long, gradually narrow when movement slows
+					let endFactor = 1;
+					if (progress > 2 * fadeLen) {
+						// Approximate speed using segment length
+						const segDx = p1.x - p0.x; const segDy = p1.y - p0.y; const segDist = Math.hypot(segDx, segDy);
+						const speed = segDist; // pixels this segment
+						const slow = Math.min(1, Math.max(0, (40 - speed) / 40)); // 0 fast .. 1 slow
+						endFactor = 1 - 0.7 * (speed < 6 ? 1 : slow * 0.6);
+						endFactor = Math.max(0.15, endFactor);
+					}
+					const dualTaper = Math.max(0.15, Math.min(1, startFactor * endFactor));
+					const taperFactor = Math.min(classicTaper, dualTaper);
+					ctx.globalAlpha = opacityMul;
+					ctx.strokeStyle = activeColor;
+					ctx.lineCap = 'round';
+					ctx.lineJoin = 'round';
+					ctx.lineWidth = Math.max(0.5, brushSize * taperFactor);
+					ctx.beginPath();
+					ctx.moveTo(p0.x, p0.y);
+					ctx.lineTo(p1.x, p1.y);
+					ctx.stroke();
+					ctx.globalAlpha = 1;
+					return;
 			}
 			if (brushMode === 'fade') {
 				const progress = strokeProgressRef.current;

@@ -105,7 +105,7 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
   {showPending && pendingFrame && (
           <div className="max-w-[1580px] mx-auto px-2">
               <div className="mb-4">
-              <h3 className="text-white/80 text-sm font-semibold mb-1 tracking-wide uppercase">Pending</h3>
+              <h3 className="text-white/80 text-sm font-semibold mb-1 tracking-wide uppercase">In progress</h3>
               <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-6 gap-3">
                 <div
                   className="relative bg-white/10 backdrop-blur-sm rounded-2xl overflow-hidden border border-yellow-400/40 hover:bg-white/20 transition-all duration-300"
@@ -149,7 +149,7 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
           const palette = weeklyPalettes[week % weeklyPalettes.length] || weeklyPalettes[0];
           const theme = themes[week % themes.length] || themes[0];
           // Map active brush ids to display names; fallback to Week 1 defaults when none
-          const activeIds = (activeBrushIds && activeBrushIds.length ? activeBrushIds : ['ink','pencil','marker','charcoal']).slice(0,4);
+          const activeIds = (activeBrushIds && activeBrushIds.length ? activeBrushIds : ['ink','acrilico','marker','charcoal']).slice(0,4);
           const activeBrushNames = activeIds
             .map(id => allBrushPresets.find(p => p.id === id)?.name || id)
             .join(', ');

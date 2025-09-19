@@ -236,8 +236,9 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
       );
     }
     if (key === 'brushMode') {
-  // Allowed winners or default four (ink, pencil, marker, charcoal)
-  const defaultIds = ['ink','pencil','marker','charcoal'];
+  // Allowed winners or default four (ink, acrílico, marker, charcoal)
+  // Pencil removed; new brushes: acuarela, acrilico, lapicero
+  const defaultIds = ['ink','acrilico','marker','charcoal'];
   const ids = (allowedBrushIds && allowedBrushIds.length > 0 ? allowedBrushIds : defaultIds).slice(0,4);
   const presets: BrushPreset[] = allBrushPresets.filter(p => ids.includes(p.id));
       const InkIcon = ({ active }: { active: boolean }) => (
@@ -247,10 +248,27 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
           <path d="M4 21h16" />
         </svg>
       );
-      const PencilIcon = ({ active }: { active: boolean }) => (
+      const AcrilicoIcon = ({ active }: { active: boolean }) => (
         <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="white" fill="none" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
-          <path d="M3 17.25V21h3.75L18.81 8.94l-3.75-3.75L3 17.25Z" />
-          <path d="m14.06 5.19 3.75 3.75" />
+          {/* Stylized flat brush with bristles */}
+          <path d="M4 20h16" />
+          <path d="M6 14h12l-1.5 4h-9z" />
+          <path d="M8 4h8l2 6H6z" />
+        </svg>
+      );
+      const AcuarelaIcon = ({ active }: { active: boolean }) => (
+        <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="white" fill="none" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
+          {/* Droplet + soft stroke */}
+          <path d="M12 3c-2.5 3-4 5.5-4 7.5A4 4 0 0 0 12 15a4 4 0 0 0 4-4.5C16 8.5 14.5 6 12 3Z" />
+          <path d="M5 19c4-1.2 10-.8 14 0" />
+        </svg>
+      );
+      const LapiceroIcon = ({ active }: { active: boolean }) => (
+        <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="white" fill="none" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
+          {/* Ballpoint pen silhouette */}
+          <path d="M5 16 14.5 6.5a2.2 2.2 0 0 1 3 3L8 19l-4 1 1-4Z" />
+          <path d="m14.5 6.5 3 3" />
+          <path d="M11 21h2" />
         </svg>
       );
       const MarkerIcon = ({ active }: { active: boolean }) => (
@@ -271,7 +289,17 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
           <div className="grid grid-cols-2 gap-2">
             {presets.map(p => {
               const active = p.id === brushPresetId;
-        const Icon = p.id === 'ink' ? InkIcon : p.id === 'pencil' ? PencilIcon : p.id === 'marker' ? MarkerIcon : CharcoalIcon;
+        const Icon = p.id === 'ink'
+          ? InkIcon
+          : p.id === 'acrilico'
+            ? AcrilicoIcon
+            : p.id === 'acuarela'
+              ? AcuarelaIcon
+              : p.id === 'lapicero'
+                ? LapiceroIcon
+                : p.id === 'marker'
+                  ? MarkerIcon
+                  : CharcoalIcon;
               return (
                 <button
                   key={p.id}

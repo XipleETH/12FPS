@@ -148,7 +148,7 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, initialVotes
                     const themes = ['Anime Inking', 'Retro Comic', 'Soft Watercolor'];
                     const palette = weeklyPalettes[week % weeklyPalettes.length] || weeklyPalettes[0];
           const theme = themes[week % themes.length] || themes[0];
-          const ids = (activeBrushIds && activeBrushIds.length ? activeBrushIds : ['ink','pencil','marker','charcoal']).slice(0,4);
+          const ids = (activeBrushIds && activeBrushIds.length ? activeBrushIds : ['ink','acrilico','marker','charcoal']).slice(0,4);
                     const names = ids.map(id => (allBrushPresets.find((p: BrushPreset)=>p.id===id)?.name) || id).join(', ');
                     return (
                       <>

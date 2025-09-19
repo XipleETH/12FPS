@@ -131,9 +131,32 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
   const dist = Math.hypot(to.x - from.x, to.y - from.y);
   const speed = dist; // px por frame event
   const simulatedPressure = pressure && pressure > 0 ? pressure : Math.max(0.15, Math.min(1, 1 - speed / 40));
-  // Taper aplicado según progreso de stroke
+    // Taper aplicado según progreso de stroke (solo reducción final clásica)
   const progress = strokeProgressRef.current;
-  const taperFactor = 1 - taper * Math.min(1, progress / (180 + baseSize * 14));
+  const classicTaper = 1 - taper * Math.min(1, progress / (180 + baseSize * 14));
+  // Para efecto "punta al inicio y al final" (Ink): añadimos rampa inicial y final simétrica.
+  // Estrategia: estimar una longitud objetivo adaptativa (strokeTotalRef). Mientras no sepamos la final,
+  // aplicamos sólo la rampa inicial. Al terminar el trazo (endStroke) ya no redibujamos, así que el final
+  // debe anticiparse: usamos ventana móvil de últimos segmentos para suponer si vamos desacelerando.
+  // Simplificación: definimos una longitud de fade (fadeLen) proporcional al tamaño del pincel y un máximo.
+  const fadeLen = Math.max(12, baseSize * 3);
+  // Rampa inicial: factor aumenta de 0.15 -> 1 en fadeLen
+  const startFactor = Math.min(1, progress / fadeLen);
+  // Intento de estimación dinámica: si la velocidad es muy baja consistentemente podríamos estar al final.
+  // Para no complicar, aplicamos un pre-taper final sólo cuando strokeProgress supera 2*fadeLen:
+  let endFactor = 1;
+  if (progress > 2 * fadeLen) {
+    // End factor desciende en los últimos fadeLen px del tramo reciente.
+    // Sin saber longitud total, usamos ventana: aplicamos descenso leve basado en velocidad reciente (speed).
+    const slow = Math.min(1, Math.max(0, (40 - speed) / 40)); // 0 (rápido) .. 1 (muy lento)
+    // Mezcla con proximidad a posible final (heurística: si speed < 6 => fuerte taper)
+    endFactor = 1 - 0.7 * (speed < 6 ? 1 : slow * 0.6);
+    endFactor = Math.max(0.15, endFactor);
+  }
+  // Factor combinado: enfatizar inicio y final, pero nunca exceder 1 ni caer bajo 0.15 salvo control.
+  const dualTaper = Math.max(0.15, Math.min(1, startFactor * endFactor));
+  // Combinar con classicTaper (que reduce progresivo) tomando el menor para mantener afinado si aplica.
+  const taperFactor = Math.min(classicTaper, dualTaper);
 
       // Helper para jitter mínimo orgánico
       const jitterPoint = (pt: {x:number;y:number}) => {
@@ -241,7 +264,7 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
         const p1 = jitterPoint(to);
         ctx.globalAlpha = opacityMul;
         ctx.strokeStyle = activeColor;
-        const pressureScale = simulatedPressure * taperFactor;
+  const pressureScale = simulatedPressure * taperFactor;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
         ctx.lineWidth = Math.max(0.5, baseSize * 0.4 + baseSize * 0.6 * pressureScale);
