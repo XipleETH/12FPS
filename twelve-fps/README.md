@@ -86,12 +86,23 @@ We apply weekly caps (max size, opacity, jitter, density) from config→Redis to
 
 ---
 ### Commands (Inside `twelve-fps/`)
-- `npm run dev` → watch mode (client + server + playtest).
+- `npm run dev` → SAFE local watch (client + server only, no upload).
 - `npm run build` → build client and server.
 - `npm run build:client` / `build:server` → individual.
 - `npm run deploy` → build + upload (`devvit upload`).
 - `npm run launch` → publish version.
 - `npm run login` → CLI auth.
+
+Playtest / upload variants:
+- `npm run dev:playtest` → local watch + automatic playtest upload each rebuild (was previous default `dev`).
+- `npm run dev:local` → alias of the safe local watch (used by `npm run dev`).
+
+Accidental version bumps: If you previously ran `npm run dev` and saw automatic version numbers (e.g. `0.0.99.x`) uploaded, that was the old behavior invoking `devvit playtest`. Now this only happens if you explicitly choose `dev:playtest`.
+
+Recommended workflow:
+1. `npm run dev` while iterating UI/logic.
+2. Occasionally run `npm run build && npm run dev:playtest` (or just `dev:playtest` if already built) to verify inside Reddit.
+3. Use `npm run deploy` only when you want to push a stable snapshot.
 
 Root monorepo:
 - `npm run deploy:devvit` → root build + sync + server build + upload.
@@ -127,7 +138,8 @@ Root app builds with hashed assets. Script `tools/sync-devvit.mjs` copies `dist/
 ```bash
 # root
 npm install
-npm run build        # optional for sync
+npm run build        # optional for sync (if root build still applies after refactor)
+# (if using asset sync script)
 npm run sync:devvit  # copy assets into WebView
 cd twelve-fps
 npm run build:server
@@ -137,7 +149,9 @@ npx devvit upload
 Live/test mode:
 ```bash
 cd twelve-fps
-npm run dev
+npm run dev          # local safe watch (no upload)
+# OR if you need live playtest updates:
+npm run dev:playtest
 ```
 
 ---
