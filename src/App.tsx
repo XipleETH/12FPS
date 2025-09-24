@@ -461,6 +461,10 @@ function App() {
 
   return (
     <div className={`min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-violet-900 ${isEmbedded ? 'embedded-mode' : ''}`}>
+      {/* Deployment badge para verificar nuevo build en Reddit */}
+      <div className="pointer-events-none select-none fixed top-1 right-2 z-[999] text-[10px] font-mono bg-indigo-700/80 text-white px-2 py-1 rounded shadow-lg tracking-tight">
+        v0.1.0-redis-purge <span className="opacity-70">23:15Z</span>
+      </div>
       {/* Embedding indicator for Reddit */}
   {/* Reddit banner removed */}
       
