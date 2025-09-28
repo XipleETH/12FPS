@@ -13,16 +13,115 @@ app.use(express.urlencoded({ extended: true }));
 // Middleware for plain text body parsing
 app.use(express.text());
 
-// --- Weekly cycle utilities ---
-const WEEK_BASE_EPOCH = Date.UTC(2025,0,5,5,1,0,0); // 2025-01-05 00:01 ET approx
-const WEEK_MS = 7*24*60*60*1000;
-const CURRENT_WEEK_KEY = 'week:current:number';
-const WEEK_PROPOSALS_KEY = (postId:string, w:number)=>`proposals:${postId}:week:${w}`;
-const WEEK_WINNERS_KEY = (postId:string, w:number)=>`week:winners:${postId}:${w}`;
-function getWeekNumber(now=Date.now()){ if(now < WEEK_BASE_EPOCH) return 1; return Math.floor((now-WEEK_BASE_EPOCH)/WEEK_MS)+1; }
-function getWeekBoundaries(week:number){ const startMs = WEEK_BASE_EPOCH + (week-1)*WEEK_MS; return { startMs, endMs: startMs + WEEK_MS - 1 }; }
-function pickWinner<T extends { votes:number; proposedAt:number }>(items:T[]):T|undefined { return items.reduce((b,i)=>{ if(!b) return i; if(i.votes>b.votes) return i; if(i.votes===b.votes && i.proposedAt < b.proposedAt) return i; return b; }, undefined as T|undefined); }
-async function ensureCurrentWeek():Promise<number>{ const v = await redis.get(CURRENT_WEEK_KEY); if(v) return parseInt(v); const n = getWeekNumber(); await redis.set(CURRENT_WEEK_KEY, n.toString()); return n; }
+// --- Weekly cycle utilities (Sunday 00:00 ET based week counter) ---
+// Requirements:
+//  - Week 1 starts now (first time this code runs) at the Sunday 00:00:00 ET (EST fixed UTC-5) that contains 'now'.
+//  - Next Sunday 00:00 ET => week 2, etc.
+//  - Auto-advance without manual rollover for consumers (chat, proposals, videos, gallery).
+// Notes:
+//  - We use a fixed offset (UTC-5) to represent ET per user request (no DST complexity for now).
+//  - Anchor is stored in Redis so restarts preserve numbering.
+//  - A manual rollover endpoint still exists but is optional.
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const ET_FIXED_OFFSET_MS = 5 * 60 * 60 * 1000; // Treat ET as constant UTC-5
+const WEEK_ANCHOR_KEY = 'week:anchor:startMs'; // UTC ms of start of week 1
+const CURRENT_WEEK_KEY = 'week:current:number'; // cached current week number
+const WEEK_TIME_OFFSET_KEY = 'week:timeOffsetMs'; // simulation offset ms
+const WEEK_PROPOSALS_KEY = (postId: string, w: number) => `proposals:${postId}:week:${w}`;
+const WEEK_WINNERS_KEY = (postId: string, w: number) => `week:winners:${postId}:${w}`;
+
+async function getTimeOffsetMs(): Promise<number> {
+  const raw = await redis.get(WEEK_TIME_OFFSET_KEY);
+  if (!raw) return 0;
+  const n = parseInt(raw, 10);
+  return isNaN(n) ? 0 : n;
+}
+
+async function nowMs(): Promise<number> { return Date.now() + await getTimeOffsetMs(); }
+
+function startOfSundayWeekET(utcMs: number): number {
+  // Convert to pseudo-ET by subtracting fixed offset, go to Sunday 00:00, then add offset back.
+  const etMs = utcMs - ET_FIXED_OFFSET_MS;
+  const d = new Date(etMs);
+  const day = d.getUTCDay(); // 0 = Sunday
+  d.setUTCHours(0, 0, 0, 0);
+  const sundayStartEtMs = d.getTime() - (day * 24 * 60 * 60 * 1000);
+  return sundayStartEtMs + ET_FIXED_OFFSET_MS; // return as UTC epoch
+}
+
+function computeWeekNumber(anchorStartMs: number, now: number): number {
+  if (now < anchorStartMs) return 1; // safety
+  return Math.floor((now - anchorStartMs) / WEEK_MS) + 1;
+}
+
+function getWeekBoundariesFromAnchor(anchorStartMs: number, week: number) {
+  const startMs = anchorStartMs + (week - 1) * WEEK_MS;
+  return { startMs, endMs: startMs + WEEK_MS - 1 };
+}
+
+function pickWinner<T extends { votes: number; proposedAt: number }>(items: T[]): T | undefined {
+  return items.reduce((b, i) => {
+    if (!b) return i;
+    if (i.votes > b.votes) return i;
+    if (i.votes === b.votes && i.proposedAt < b.proposedAt) return i;
+    return b;
+  }, undefined as T | undefined);
+}
+
+// Normalize proposal types (support synonyms / language variants)
+function normalizeProposalType(raw: any): string {
+  if (typeof raw !== 'string') return '';
+  const t = raw.toLowerCase();
+  if (['palette','paleta','colors','colores','palette-colors','color-palette'].includes(t)) return 'palette';
+  if (['brushkit','brush-kit','brushes','pinceles','pincel','brushes-kit'].includes(t)) return 'brushKit';
+  if (['theme','tema','motif'].includes(t)) return 'theme';
+  return raw;
+}
+
+async function ensureCurrentWeek(): Promise<number> {
+  const now = await nowMs();
+  let anchorStr = await redis.get(WEEK_ANCHOR_KEY);
+  if (!anchorStr) {
+    // First-time initialization: anchor is the Sunday of current time (ET)
+    const anchor = startOfSundayWeekET(now);
+    await redis.set(WEEK_ANCHOR_KEY, anchor.toString());
+    await redis.set(CURRENT_WEEK_KEY, '1');
+    return 1;
+  }
+  const anchorStartMs = parseInt(anchorStr, 10);
+  const computedWeek = computeWeekNumber(anchorStartMs, now);
+  const storedWeekStr = await redis.get(CURRENT_WEEK_KEY);
+  let storedWeek = storedWeekStr ? parseInt(storedWeekStr, 10) : NaN;
+  if (!storedWeek || storedWeek < computedWeek) {
+    // Auto-advance
+    storedWeek = computedWeek;
+    await redis.set(CURRENT_WEEK_KEY, storedWeek.toString());
+  }
+  return storedWeek;
+}
+
+function getWeekBoundaries(_week: number) { // underscore prefix to signal intentional unused param (TS/ESLint)
+  // Need anchor to compute boundaries
+  // (Caller should have called ensureCurrentWeek once in request path to guarantee anchor exists.)
+  return {
+    startMs: 0,
+    endMs: 0,
+  };
+}
+
+async function getAccurateWeekBoundaries(week: number) {
+  const anchorStr = await redis.get(WEEK_ANCHOR_KEY);
+  if (!anchorStr) return { startMs: 0, endMs: 0 };
+  const anchor = parseInt(anchorStr, 10);
+  return getWeekBoundariesFromAnchor(anchor, week);
+}
+
+async function computeWeekForTimestamp(ts:number):Promise<number>{
+  const anchorStr = await redis.get(WEEK_ANCHOR_KEY);
+  if(!anchorStr){ return 1; }
+  const anchor = parseInt(anchorStr,10);
+  return computeWeekNumber(anchor, ts);
+}
 
 const router = express.Router();
 
@@ -258,11 +357,14 @@ router.post('/api/finalize-turn', async (_req, res) => {
     if (!postId) return res.status(400).json({ error: 'post not found' });
     // Persist pending frame if present
     if (state.pendingFrame && state.currentArtist) {
+      const ts = await nowMs();
+      const week = await computeWeekForTimestamp(ts);
       const frameData: StoredFrame = {
-        key: `frames/${Date.now().toString(36)}.png`,
+        key: `frames/${ts.toString(36)}.png`,
         dataUrl: state.pendingFrame.dataUrl,
-        timestamp: Date.now(),
-        artist: state.currentArtist
+        timestamp: ts,
+        artist: state.currentArtist,
+        week
       };
       // store frame
       await redis.set(`frames:data:${postId}:${frameData.key}`, JSON.stringify(frameData));
@@ -290,54 +392,56 @@ interface StoredFrame {
   dataUrl: string; // store the full data URL
   timestamp: number;
   artist: string; // reddit username of creator
+  week?: number; // persisted week at creation time
 }
 
 // List frames from Redis storage (canonical route)
-router.get('/api/list-frames', async (_req, res) => {
+router.get('/api/list-frames', async (req, res) => {
   try {
     const { postId } = context;
     if (!postId) return res.json({ frames: [] });
-    
-    // Get list of frame keys from Redis
+    const filterWeek = req.query.week ? parseInt(String(req.query.week),10) : undefined;
+    const group = req.query.group === '1' || req.query.group === 'true';
     const frameKeysStr = await redis.get(`frames:list:${postId}`);
     const frameKeys: string[] = frameKeysStr ? JSON.parse(frameKeysStr) : [];
-    
-    // Get all frame data
     const frames: any[] = [];
     for (const key of frameKeys) {
       const frameDataStr = await redis.get(`frames:data:${postId}:${key}`);
-      if (frameDataStr) {
-        const frameData = JSON.parse(frameDataStr);
-        // Skip flagged/deleted frames from public list
-        if (frameData.status && frameData.status !== 'active') continue;
-        // votes
-        const vraw = await redis.get(`frame:votes:${postId}:${key}`);
-        let votesUp = 0, votesDown = 0; let myVote: -1|0|1 = 0;
-        if (vraw) {
-          try { const v = JSON.parse(vraw); votesUp = v.up||0; votesDown = v.down||0; } catch{}
-        }
-        try {
-          const me = await reddit.getCurrentUsername();
-          if (me && vraw) { const v = JSON.parse(vraw); const by = v.by||{}; myVote = by[me] ?? 0; }
-        } catch {}
-        // compute week from timestamp
-        const week = getWeekNumber(frameData.timestamp);
-        frames.push({
-          key: frameData.key,
-          url: frameData.dataUrl, // return data URL directly
-          lastModified: frameData.timestamp,
-          artist: frameData.artist || 'anonymous',
-          week,
-          votesUp,
-          votesDown,
-          myVote
-        });
-      }
+      if (!frameDataStr) continue;
+      const frameData = JSON.parse(frameDataStr);
+      if (frameData.status && frameData.status !== 'active') continue;
+      const vraw = await redis.get(`frame:votes:${postId}:${key}`);
+      let votesUp = 0, votesDown = 0; let myVote: -1|0|1 = 0;
+      if (vraw) { try { const v = JSON.parse(vraw); votesUp = v.up||0; votesDown = v.down||0; } catch{} }
+      try {
+        const me = await reddit.getCurrentUsername();
+        if (me && vraw) { const v = JSON.parse(vraw); const by = v.by||{}; myVote = by[me] ?? 0; }
+      } catch {}
+      const week = frameData.week ?? await computeWeekForTimestamp(frameData.timestamp);
+      if (filterWeek && week !== filterWeek) continue;
+      frames.push({
+        key: frameData.key,
+        url: frameData.dataUrl,
+        lastModified: frameData.timestamp,
+        artist: frameData.artist || 'anonymous',
+        week,
+        votesUp,
+        votesDown,
+        myVote
+      });
     }
-    
-    frames.sort((a, b) => a.lastModified - b.lastModified);
+    frames.sort((a,b)=> a.lastModified - b.lastModified);
+    if (group) {
+      const byWeek: Record<string, any[]> = {};
+      for (const f of frames) {
+        const wk = (f.week ?? 0).toString();
+        if(!byWeek[wk]) byWeek[wk] = [];
+        byWeek[wk].push(f);
+      }
+      return res.json({ framesByWeek: byWeek });
+    }
     res.json({ frames });
-  } catch(e: any) {
+  } catch(e:any){
     console.error('[devvit r2/frames] error', e?.message);
     res.json({ frames: [] });
   }
@@ -389,17 +493,14 @@ router.post('/api/upload-frame', async (req, res) => {
       return res.status(413).json({ error: 'too large' });
     }
     
-    const id = Date.now().toString(36) + '-' + crypto.randomBytes(3).toString('hex');
+  const ts = await nowMs();
+  const id = ts.toString(36) + '-' + crypto.randomBytes(3).toString('hex');
     const key = `frames/${id}.png`;
     
     // Store frame data in Redis
-    const username = await reddit.getCurrentUsername();
-    const frameData: StoredFrame = {
-      key,
-      dataUrl,
-      timestamp: Date.now(),
-      artist: username || 'anonymous'
-    };
+  const username = await reddit.getCurrentUsername();
+  const week = await computeWeekForTimestamp(ts);
+  const frameData: StoredFrame = { key, dataUrl, timestamp: ts, artist: username || 'anonymous', week };
     
     await redis.set(`frames:data:${postId}:${key}`, JSON.stringify(frameData));
     
@@ -673,7 +774,8 @@ router.post('/api/proposals', async (req, res) => {
     if (!type || !title) return res.status(400).json({ error: 'type and title required' });
     const username = await reddit.getCurrentUsername();
     const week = await ensureCurrentWeek();
-    const proposal = { id: Date.now().toString(), type, title, data, proposedBy: username || 'anonymous', proposedAt: Date.now(), votes: 0, voters: [], week };
+  const ts = await nowMs();
+  const proposal = { id: ts.toString(), type, title, data, proposedBy: username || 'anonymous', proposedAt: ts, votes: 0, voters: [], week };
     const proposalsStr = await redis.get(WEEK_PROPOSALS_KEY(postId, week));
     const proposals = proposalsStr ? JSON.parse(proposalsStr) : [];
     proposals.unshift(proposal);
@@ -775,20 +877,53 @@ router.get('/api/week', async (_req,res)=>{
   try {
     const { postId } = context;
     const currentWeek = await ensureCurrentWeek();
-    const { startMs, endMs } = getWeekBoundaries(currentWeek);
-    const now = Date.now();
-    const secondsUntilEnd = Math.max(0, Math.floor((endMs - now)/1000));
+    const bounds = await getAccurateWeekBoundaries(currentWeek);
+  const now = await nowMs();
+    const secondsUntilEnd = Math.max(0, Math.floor((bounds.endMs - now)/1000));
     let winners: any = null;
+    let autoMaterialized = false;
     if (postId) {
       const wStr = await redis.get(WEEK_WINNERS_KEY(postId, currentWeek - 1));
-      if (wStr) {
-        try { winners = JSON.parse(wStr); } catch {}
+      if (wStr) { try { winners = JSON.parse(wStr); } catch {} }
+      if (!winners && currentWeek > 1) {
+        // Lazy compute winners if still not stored (mirrors logic in week-config)
+        const proposalsStr = await redis.get(WEEK_PROPOSALS_KEY(postId, currentWeek - 1));
+        const proposals = proposalsStr ? JSON.parse(proposalsStr) : [];
+        const paletteWinner = pickWinner(proposals.filter((p:any)=>p.type==='palette')) || null;
+        const themeWinner = pickWinner(proposals.filter((p:any)=>p.type==='theme')) || null;
+        const brushWinner = pickWinner(proposals.filter((p:any)=>p.type==='brushKit')) || null;
+        winners = { palette: paletteWinner, theme: themeWinner, brushKit: brushWinner };
+        await redis.set(WEEK_WINNERS_KEY(postId, currentWeek - 1), JSON.stringify(winners));
+        autoMaterialized = true;
       }
     }
-    res.json({ week: currentWeek, startMs, endMs, secondsUntilEnd, previousWinners: winners });
+    res.json({ week: currentWeek, startMs: bounds.startMs, endMs: bounds.endMs, secondsUntilEnd, previousWinners: winners, previousWinnersAutoMaterialized: autoMaterialized });
   } catch(e:any){
     console.error('[devvit api/week] error', e?.message);
     res.status(500).json({ error:'week info failed', message:e?.message });
+  }
+});
+
+// Week status debug endpoint
+router.get('/api/week-status', async (_req,res)=>{
+  try {
+  const [now, offsetMs] = [await nowMs(), await getTimeOffsetMs()];
+    const anchorStr = await redis.get(WEEK_ANCHOR_KEY);
+    const currentWeek = await ensureCurrentWeek();
+    let anchor = anchorStr ? parseInt(anchorStr,10) : null;
+    const bounds = anchor ? getWeekBoundariesFromAnchor(anchor, currentWeek) : { startMs:0, endMs:0 };
+    res.json({
+      now,
+      offsetMs,
+      simulated: offsetMs !== 0,
+      anchorStartMs: anchor,
+      currentWeek,
+      startMs: bounds.startMs,
+      endMs: bounds.endMs,
+      secondsUntilEnd: bounds.endMs ? Math.max(0, Math.floor((bounds.endMs - now)/1000)) : null
+    });
+  } catch(e:any){
+    res.status(500).json({ error:'week-status failed', message:e?.message });
   }
 });
 // Weekly chat endpoints (persist across the whole week in Devvit Redis)
@@ -874,8 +1009,9 @@ router.post('/api/chat', async (req,res)=>{
     if(typeof body !== 'string' || !body.trim()) return res.status(400).json({ error:'empty' });
     if(body.length > 280) return res.status(400).json({ error:'too long' });
     const week = await ensureCurrentWeek();
-  const key = WEEK_CHAT_KEY(postId, week);
-  const msg: ChatMessage = { id: Date.now().toString(36)+Math.random().toString(36).slice(2,6), user: username, body: body.trim(), ts: Date.now(), week };
+    const ts = await nowMs();
+    const key = WEEK_CHAT_KEY(postId, week);
+    const msg: ChatMessage = { id: ts.toString(36)+Math.random().toString(36).slice(2,6), user: username, body: body.trim(), ts, week };
   const raw = await redis.get(key);
   let arr: ChatMessage[] = [];
   if(raw){ try { arr = JSON.parse(raw); } catch { arr = []; } }
@@ -906,7 +1042,8 @@ router.get('/api/chat/debug', async (req,res)=>{
     }
     // Optional simulate write
     if(req.query.simulate === '1'){
-      const msg: ChatMessage = { id: 'dbg-'+Date.now().toString(36), user: 'debug', body: 'debug message', ts: Date.now(), week: targetWeek };
+  const ts = await nowMs();
+  const msg: ChatMessage = { id: 'dbg-'+ts.toString(36), user: 'debug', body: 'debug message', ts, week: targetWeek };
       arr.push(msg);
       if(arr.length > MAX_CHAT_MESSAGES) arr = arr.slice(-MAX_CHAT_MESSAGES);
       await redis.set(key, JSON.stringify(arr));
@@ -954,3 +1091,284 @@ console.log('[devvit server] starting. Routes registered (simplified, Redis-only
 const server = createServer(app);
 server.on('error', (err) => console.error(`server error; ${err.stack}`));
 server.listen(port);
+
+// Week simulation endpoint (POST). Body: { action: 'add-days'|'add-weeks'|'set-offset'|'reset', value?: number }
+// Helper to lazily compute previous week winners if missing
+async function materializePreviousWeekWinners(postId: string, currentWeek: number) {
+  if (currentWeek <= 1) return null;
+  const existing = await redis.get(WEEK_WINNERS_KEY(postId, currentWeek - 1));
+  if (existing) { try { return JSON.parse(existing); } catch { return null; } }
+  const proposalsStr = await redis.get(WEEK_PROPOSALS_KEY(postId, currentWeek - 1));
+  const proposals = proposalsStr ? JSON.parse(proposalsStr) : [];
+  const norm = proposals.map((p:any)=> ({ ...p, _normType: normalizeProposalType(p.type) }));
+  const paletteWinner = pickWinner(norm.filter((p:any)=>p._normType==='palette')) || null;
+  const themeWinner = pickWinner(norm.filter((p:any)=>p._normType==='theme')) || null;
+  const brushWinner = pickWinner(norm.filter((p:any)=>p._normType==='brushKit')) || null;
+  let winners = { palette: paletteWinner, theme: themeWinner, brushKit: brushWinner };
+  // Carry-over fallback if all null
+  if (!winners.palette && !winners.theme && !winners.brushKit) {
+    for (let w = currentWeek - 2; w >= 1; w--) {
+      const prev = await redis.get(WEEK_WINNERS_KEY(postId, w));
+      if (prev) { try { const parsed = JSON.parse(prev); if (parsed && (parsed.palette||parsed.theme||parsed.brushKit)) { winners = parsed; break; } } catch {}
+      }
+    }
+  }
+  await redis.set(WEEK_WINNERS_KEY(postId, currentWeek - 1), JSON.stringify(winners));
+  // ensure current week proposals array exists
+  const curKey = WEEK_PROPOSALS_KEY(postId, currentWeek);
+  if (!(await redis.get(curKey))) await redis.set(curKey, JSON.stringify([]));
+  return winners;
+}
+
+// Week config endpoint to be consumed by drawing page (auto winners)
+app.get('/api/week-config', async (_req, res) => {
+  try {
+    const { postId } = context; const currentWeek = await ensureCurrentWeek();
+    const bounds = await getAccurateWeekBoundaries(currentWeek);
+    let winners: any = null;
+    if (postId) {
+      winners = await materializePreviousWeekWinners(postId, currentWeek);
+      if (!winners && currentWeek > 2) {
+        for (let w = currentWeek - 2; w >= 1; w--) {
+          const prev = await redis.get(WEEK_WINNERS_KEY(postId, w));
+          if (prev) { try { const parsed = JSON.parse(prev); if (parsed && (parsed.palette||parsed.theme||parsed.brushKit)) { winners = parsed; break; } } catch {}
+          }
+        }
+      }
+    }
+    const offsetMs = await getTimeOffsetMs();
+    res.json({ week: currentWeek, startMs: bounds.startMs, endMs: bounds.endMs, previousWinners: winners, simulated: offsetMs !== 0, offsetMs });
+  } catch(e:any){
+    console.error('[devvit api/week-config] error', e?.message);
+    res.status(500).json({ error:'week-config failed', message:e?.message });
+  }
+});
+
+// Debug latest frames with stored vs computed week
+app.get('/api/debug/frames-latest', async (req, res) => {
+  try {
+    const { postId } = context; if(!postId) return res.json({ frames: [] });
+    const limit = req.query.limit ? parseInt(String(req.query.limit),10) : 25;
+    const listRaw = await redis.get(`frames:list:${postId}`); const list:string[] = listRaw ? JSON.parse(listRaw):[];
+    const slice = list.slice(-limit);
+    const anchorStr = await redis.get(WEEK_ANCHOR_KEY); const anchor = anchorStr ? parseInt(anchorStr,10):0;
+    const frames:any[] = [];
+    for(const key of slice){
+      const raw = await redis.get(`frames:data:${postId}:${key}`); if(!raw) continue;
+      try {
+        const fd = JSON.parse(raw);
+        frames.push({ key, ts: fd.timestamp, storedWeek: fd.week ?? null, computedWeek: anchor? computeWeekNumber(anchor, fd.timestamp): null, artist: fd.artist });
+      } catch {}
+    }
+    res.json({ frames, anchor });
+  } catch(e:any){
+    console.error('[devvit api/debug/frames-latest] error', e?.message);
+    res.status(500).json({ error:'frames-latest failed', message:e?.message });
+  }
+});
+
+// Debug proposals endpoint
+app.get('/api/debug/proposals', async (req, res) => {
+  try {
+    const { postId } = context; if(!postId) return res.json({ ok:false, reason:'no postId'});
+    const weekParam = req.query.week ? parseInt(String(req.query.week),10) : await ensureCurrentWeek();
+    const raw = await redis.get(WEEK_PROPOSALS_KEY(postId, weekParam));
+    const proposals = raw ? JSON.parse(raw) : [];
+    const mapped = proposals.map((p:any)=> ({ id: p.id, type: p.type, norm: normalizeProposalType(p.type), votes: p.votes, proposedAt: p.proposedAt }));
+    res.json({ ok:true, week: weekParam, count: proposals.length, mapped });
+  } catch(e:any){ res.status(500).json({ ok:false, error:e?.message }); }
+});
+
+// Unified draw configuration: winners + palette + brushes + theme + current week
+app.get('/api/draw-config', async (req, res) => {
+  try {
+    const { postId } = context; if(!postId) return res.json({ ok:false, reason:'no postId'});
+    const rawFlag = req.query.raw === '1';
+    const currentWeek = await ensureCurrentWeek();
+    let winners = await materializePreviousWeekWinners(postId, currentWeek);
+    if (!winners && currentWeek > 2) {
+      for (let w = currentWeek - 2; w >= 1; w--) {
+        const prev = await redis.get(WEEK_WINNERS_KEY(postId, w));
+        if (prev) { try { const parsed = JSON.parse(prev); if (parsed && (parsed.palette||parsed.theme||parsed.brushKit)) { winners = parsed; break; } } catch {}
+        }
+      }
+    }
+    async function fallbackCategory(cat: 'palette'|'theme'|'brushKit'){
+      if(!postId) return null;
+      const wAny: any = winners;
+      if (wAny && wAny[cat]) return wAny[cat];
+      for (let w = currentWeek - 2; w >= 1; w--) {
+        const prevKey = WEEK_WINNERS_KEY(postId as string, w);
+        const prev = await redis.get(prevKey);
+        if (prev) {
+          try { const parsed = JSON.parse(prev); if (parsed && parsed[cat]) return parsed[cat]; } catch{}
+        }
+      }
+      return null;
+    }
+    const paletteEntry = await fallbackCategory('palette');
+    const brushEntry = await fallbackCategory('brushKit');
+    const themeEntry = await fallbackCategory('theme');
+    if (!winners) winners = { palette: paletteEntry, brushKit: brushEntry, theme: themeEntry } as any;
+    // Robust palette extraction
+    function extractPalette(pe:any): string[]{
+      if (!pe || !pe.data) return [];
+      const d = pe.data;
+      if (Array.isArray(d.colors)) return d.colors;
+      if (Array.isArray(d.palette)) return d.palette;
+      if (Array.isArray(d.hex)) return d.hex;
+      if (Array.isArray(d.list)) return d.list;
+      if (typeof d === 'object') {
+        // attempt flatten values that look like hex strings
+        const vals = Object.values(d);
+        if (vals.every(v => typeof v === 'string' && /^#?[0-9A-Fa-f]{3,8}$/.test(v as string))) return vals as string[];
+      }
+      return [];
+    }
+    const paletteColors = extractPalette(paletteEntry);
+    // Robust brush extraction: attempt structured forms and pair ids+names
+    function extractBrushes(be:any): any[] {
+      if (!be || !be.data) return [];
+      const d = be.data;
+      const simpleArrayReturn = (arr:any[]): any[] => {
+        // Accept arrays of strings or objects already in desired form
+        if (!Array.isArray(arr)) return [];
+        return arr.map((b:any) => {
+          if (b && typeof b === 'object') {
+            const id = b.id ?? b.key ?? b.name;
+            const name = b.name ?? b.title ?? b.id;
+            return { id: String(id).toLowerCase(), name: String(name) };
+          }
+          return { id: String(b).toLowerCase(), name: String(b) };
+        });
+      };
+      // Direct list forms
+      if (Array.isArray(d.brushes)) return simpleArrayReturn(d.brushes);
+      if (Array.isArray(d.items)) return simpleArrayReturn(d.items);
+      if (Array.isArray(d.kit)) return simpleArrayReturn(d.kit);
+      if (Array.isArray(d.list)) return simpleArrayReturn(d.list);
+      // ids + names pairing
+      if (Array.isArray(d.ids) && Array.isArray(d.names)) {
+        const out:any[] = [];
+        const len = Math.min(d.ids.length, d.names.length);
+        for (let i=0;i<len;i++) {
+          const rawId = d.ids[i];
+          const rawName = d.names[i];
+          out.push({ id: String(rawId).toLowerCase(), name: String(rawName) });
+        }
+        return out;
+      }
+      if (Array.isArray(d.ids)) {
+        return d.ids.map((id:any) => ({ id: String(id).toLowerCase(), name: String(id) }));
+      }
+      return [];
+    }
+    // After extraction, canonicalize ids & names using known presets if possible
+    const canonicalBrushName: Record<string,string> = {
+      ink: 'Ink',
+      acrilico: 'Acrílico',
+      marker: 'Marker',
+      charcoal: 'Charcoal',
+      acuarela: 'Acuarela',
+      lapicero: 'Lapicero'
+    };
+    const brushes = extractBrushes(brushEntry);
+    for (const b of brushes) {
+      if (!b || typeof b !== 'object') continue;
+      if (b.id) {
+        const low = String(b.id).toLowerCase();
+        b.id = low;
+        b.name = canonicalBrushName[low] || b.name || low;
+      }
+    }
+    const theme = themeEntry?.data?.value || themeEntry?.title || null;
+    const toolsVersion = [paletteEntry?.id||'', brushEntry?.id||'', themeEntry?.id||''].join('|');
+    const tools = {
+      palette: { colors: paletteColors, id: paletteEntry?.id || null },
+      brushKit: { brushes, id: brushEntry?.id || null },
+      theme: { value: theme, id: themeEntry?.id || null }
+    };
+    const response:any = { ok:true, currentWeek, previousWeek: currentWeek-1, paletteColors, brushes, theme, toolsVersion, tools, winners: winners||null };
+    if (!rawFlag) delete response.winners; // hide heavy structure unless requested
+    res.json(response);
+  } catch(e:any){ res.status(500).json({ ok:false, error:e?.message }); }
+});
+
+// Force rebuild / recompute winners for a given week range (admin/debug)
+app.post('/api/debug/rebuild-winners', async (req, res) => {
+  try {
+    const { postId } = context; if(!postId) return res.status(400).json({ ok:false, reason:'no postId'});
+    const { fromWeek = 1, toWeek } = req.body || {};
+    const currentWeek = await ensureCurrentWeek();
+    const end = Math.min(toWeek || currentWeek - 1, currentWeek - 1);
+    const rebuilt: Record<number, any> = {};
+    for (let w = fromWeek; w <= end; w++) {
+      const proposalsStr = await redis.get(WEEK_PROPOSALS_KEY(postId, w));
+      const proposals = proposalsStr ? JSON.parse(proposalsStr) : [];
+      const norm = proposals.map((p:any)=> ({ ...p, _normType: normalizeProposalType(p.type) }));
+      const paletteWinner = pickWinner(norm.filter((p:any)=>p._normType==='palette')) || null;
+      const themeWinner = pickWinner(norm.filter((p:any)=>p._normType==='theme')) || null;
+      const brushWinner = pickWinner(norm.filter((p:any)=>p._normType==='brushKit')) || null;
+      const winners = { palette: paletteWinner, theme: themeWinner, brushKit: brushWinner };
+      await redis.set(WEEK_WINNERS_KEY(postId, w), JSON.stringify(winners));
+      rebuilt[w] = winners;
+    }
+    res.json({ ok:true, rebuilt });
+  } catch(e:any){ res.status(500).json({ ok:false, error:e?.message }); }
+});
+
+// Winners history (lightweight) for diagnostics
+app.get('/api/debug/winners-history', async (req, res) => {
+  try {
+    const { postId } = context; if(!postId) return res.json({ ok:false, reason:'no postId'});
+    const upto = req.query.upto ? parseInt(String(req.query.upto),10) : await ensureCurrentWeek();
+    const out: Record<number, any> = {};
+    for (let w = 1; w < upto; w++) {
+      const raw = await redis.get(WEEK_WINNERS_KEY(postId, w));
+      if (raw) { try { out[w] = JSON.parse(raw); } catch{} }
+    }
+    res.json({ ok:true, history: out });
+  } catch(e:any){ res.status(500).json({ ok:false, error:e?.message }); }
+});
+
+// Raw winners for single week (includes per-category fallback result simulation)
+app.get('/api/debug/week-winners', async (req, res) => {
+  try {
+    const { postId } = context; if(!postId) return res.json({ ok:false, reason:'no postId'});
+    const targetWeek = req.query.week ? parseInt(String(req.query.week),10) : (await ensureCurrentWeek()) - 1;
+    if (targetWeek < 1) return res.json({ ok:true, week: targetWeek, winners: null });
+    const raw = await redis.get(WEEK_WINNERS_KEY(postId, targetWeek));
+    let winners = raw ? (()=>{ try { return JSON.parse(raw); } catch { return null; } })() : null;
+    res.json({ ok:true, week: targetWeek, winners });
+  } catch(e:any){ res.status(500).json({ ok:false, error:e?.message }); }
+});
+
+app.post('/api/week-simulate', async (req, res) => {
+  try {
+    const { action, value } = req.body || {};
+    let offset = await getTimeOffsetMs();
+    if (action === 'add-days') {
+      if (typeof value !== 'number') return res.status(400).json({ error: 'value (days) required' });
+      offset += value * 24 * 60 * 60 * 1000;
+    } else if (action === 'add-weeks') {
+      if (typeof value !== 'number') return res.status(400).json({ error: 'value (weeks) required' });
+      offset += value * WEEK_MS;
+    } else if (action === 'set-offset') {
+      if (typeof value !== 'number') return res.status(400).json({ error: 'value (ms) required' });
+      offset = value;
+    } else if (action === 'reset') {
+      offset = 0;
+    } else {
+      return res.status(400).json({ error: 'invalid action' });
+    }
+    await redis.set(WEEK_TIME_OFFSET_KEY, offset.toString());
+    const week = await ensureCurrentWeek();
+    const anchorStr = await redis.get(WEEK_ANCHOR_KEY);
+    const anchor = anchorStr ? parseInt(anchorStr,10) : 0;
+    const bounds = getWeekBoundariesFromAnchor(anchor, week);
+    res.json({ ok: true, action, offsetMs: offset, week, bounds });
+  } catch(e:any){
+    console.error('[devvit api/week-simulate] error', e?.message);
+    res.status(500).json({ error: 'week-simulate failed', message: e?.message });
+  }
+});

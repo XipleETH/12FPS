@@ -68,13 +68,16 @@ function App() {
   const [timeLeft, setTimeLeft] = useState<number>(0); // seconds until current 2h window end
   const [sessionStartTs, setSessionStartTs] = useState<number | null>(null); // when current artist window started
   const [currentWeek,setCurrentWeek] = useState<number>(1);
-  const [weekEndSeconds,setWeekEndSeconds] = useState<number>(0);
   const [paletteSide, setPaletteSide] = useState<'left' | 'right'>('right');
   // Brush system disabled (presets & styles removed)
   const [panelsOrder, setPanelsOrder] = useState<PanelKey[]>(['actions','tools','brushSize','brushMode','palette']);
   const [tool, setTool] = useState<'draw' | 'erase' | 'fill'>('draw');
   const [zoom, setZoom] = useState(1);
   const [onionOpacity, setOnionOpacity] = useState(0.35);
+  // Dynamic weekly tools from backend
+  const [toolsVersion, setToolsVersion] = useState<string>('');
+  const [allowedBrushIds, setAllowedBrushIds] = useState<string[] | undefined>(undefined);
+  const [paletteColors, setPaletteColors] = useState<string[] | undefined>(undefined);
   // Poll finalized frames periodically to keep spectators in sync (artist already refreshes on finalize)
   useEffect(() => {
     const interval = window.setInterval(async () => {
@@ -112,14 +115,13 @@ function App() {
 
   // fastForward removed
   
-  // Weekly palette - changes every week
+  // Default fallback palettes if backend isn't available yet
   const weeklyPalettes = [
     ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD'],
     ['#E17055', '#FDCB6E', '#6C5CE7', '#A29BFE', '#FD79A8', '#E84393'],
     ['#00CEC9', '#55A3FF', '#FDCB6E', '#E17055', '#A29BFE', '#FD79A8']
   ];
-  
-  const currentPalette = weeklyPalettes[currentWeek % weeklyPalettes.length];
+  const currentPalette = paletteColors && paletteColors.length ? paletteColors : weeklyPalettes[currentWeek % weeklyPalettes.length];
   // No currentPreset while brushes are disabled
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -238,6 +240,68 @@ function App() {
     tick();
     return () => window.clearInterval(id);
   }, []);
+
+  // Fetch dynamic weekly tools (palette, brushes) from backend and react to changes via toolsVersion
+  useEffect(() => {
+    let aborted = false;
+    let interval: number | null = null;
+    const applyConfig = (cfg: any) => {
+      // Guard: ensure object
+      if (!cfg || typeof cfg !== 'object') return;
+      if (typeof cfg.currentWeek === 'number') setCurrentWeek(cfg.currentWeek);
+      if (typeof cfg.toolsVersion === 'string') setToolsVersion(prev => prev !== cfg.toolsVersion ? cfg.toolsVersion : prev);
+      // Prefer canonical tools object if present
+      const colors: string[] | undefined = cfg?.tools?.palette?.colors || cfg.paletteColors;
+  const rawBrushes = (cfg?.tools?.brushKit?.brushes || cfg.brushes) as any;
+
+      if (Array.isArray(colors) && colors.length) {
+        setPaletteColors(prev => {
+          const changed = !prev || prev.length !== colors.length || prev.some((c, i) => c !== colors[i]);
+          // If activeColor not in new palette, switch to the first
+          if (changed) {
+            if (!colors.includes(activeColor)) {
+              setActiveColor(colors[0]);
+            }
+          }
+          return colors;
+        });
+      }
+
+      if (Array.isArray(rawBrushes) && rawBrushes.length) {
+        const knownIds = new Set(allBrushPresets.map(p => p.id));
+        // rawBrushes may be array of {id,name} or plain ids
+        const normalized = rawBrushes.map((b:any) => {
+          if (b && typeof b === 'object' && b.id) return String(b.id).toLowerCase();
+          return String(b).toLowerCase();
+        }).filter((id:string) => knownIds.has(id));
+        if (normalized.length) {
+          setAllowedBrushIds(prev => {
+            const changed = !prev || prev.length !== normalized.length || prev.some((id, i) => id !== normalized[i]);
+            if (changed) {
+              if (!normalized.includes(brushPresetId)) {
+                setBrushPresetId(normalized[0]);
+                const preset = allBrushPresets.find(p => p.id === normalized[0]);
+                if (preset) setBrushSize(preset.size);
+              }
+            }
+            return normalized;
+          });
+        }
+      }
+    };
+    const fetchConfig = async () => {
+      try {
+        const r = await fetch('/api/draw-config');
+        if (!r.ok) return;
+        const j = await r.json();
+        if (!aborted) applyConfig(j);
+      } catch {}
+    };
+    fetchConfig();
+    // Poll periodically to catch week rollover and tools changes
+    interval = window.setInterval(fetchConfig, 30000);
+    return () => { aborted = true; if (interval) window.clearInterval(interval); };
+  }, [brushPresetId, activeColor]);
 
   // Sube un dataURL al backend (con soporte interno Reddit /r2/upload-frame)
   // Removed legacy uploadDataUrlPNG (external uploads disabled).
@@ -464,6 +528,7 @@ function App() {
       {/* Deployment badge para verificar nuevo build en Reddit */}
       <div className="pointer-events-none select-none fixed top-1 right-2 z-[999] text-[10px] font-mono bg-indigo-700/80 text-white px-2 py-1 rounded shadow-lg tracking-tight">
         v0.1.0-redis-purge <span className="opacity-70">23:15Z</span>
+        {toolsVersion ? <span className="ml-1 opacity-80">| tv:{toolsVersion}</span> : null}
       </div>
       {/* Embedding indicator for Reddit */}
   {/* Reddit banner removed */}
@@ -499,6 +564,7 @@ function App() {
               canStart={Boolean(turnInfo && !turnInfo.currentArtist && timeLeft > 0)}
               isArtist={Boolean(turnInfo && turnInfo.currentArtist === currentUser)}
               currentArtist={turnInfo?.currentArtist || null}
+              allowedBrushIds={allowedBrushIds}
             />
             <div ref={canvasCardRef}>
               <div className="flex items-start gap-4">
