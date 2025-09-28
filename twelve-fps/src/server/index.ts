@@ -360,7 +360,8 @@ router.post('/api/finalize-turn', async (_req, res) => {
       const ts = await nowMs();
       const week = await computeWeekForTimestamp(ts);
       const frameData: StoredFrame = {
-        key: `frames/${ts.toString(36)}.png`,
+        // New per-week directory structure so past weeks are retained logically
+        key: `frames/week-${week}/${ts.toString(36)}.png`,
         dataUrl: state.pendingFrame.dataUrl,
         timestamp: ts,
         artist: state.currentArtist,
@@ -417,7 +418,21 @@ router.get('/api/list-frames', async (req, res) => {
         const me = await reddit.getCurrentUsername();
         if (me && vraw) { const v = JSON.parse(vraw); const by = v.by||{}; myVote = by[me] ?? 0; }
       } catch {}
-      const week = frameData.week ?? await computeWeekForTimestamp(frameData.timestamp);
+      // Derive week: prefer stored week, else parse from key like frames/week-<n>/..., else compute from timestamp
+      let week: number;
+      if (typeof frameData.week === 'number') {
+        week = frameData.week;
+      } else {
+        const m = key.match(/week-(\d+)\//);
+        if (m && m[1]) {
+          week = parseInt(m[1],10);
+        } else {
+          week = await computeWeekForTimestamp(frameData.timestamp);
+          // Backfill week into stored data for faster future loads (legacy frames)
+          frameData.week = week;
+          await redis.set(`frames:data:${postId}:${key}`, JSON.stringify(frameData));
+        }
+      }
       if (filterWeek && week !== filterWeek) continue;
       frames.push({
         key: frameData.key,
@@ -495,11 +510,11 @@ router.post('/api/upload-frame', async (req, res) => {
     
   const ts = await nowMs();
   const id = ts.toString(36) + '-' + crypto.randomBytes(3).toString('hex');
-    const key = `frames/${id}.png`;
+    const week = await computeWeekForTimestamp(ts);
+    const key = `frames/week-${week}/${id}.png`;
     
     // Store frame data in Redis
   const username = await reddit.getCurrentUsername();
-  const week = await computeWeekForTimestamp(ts);
   const frameData: StoredFrame = { key, dataUrl, timestamp: ts, artist: username || 'anonymous', week };
     
     await redis.set(`frames:data:${postId}:${key}`, JSON.stringify(frameData));
