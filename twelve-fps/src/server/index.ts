@@ -390,75 +390,144 @@ router.post('/api/finalize-turn', async (_req, res) => {
 // --- Redis-based persistent storage for frames (shared across all users) ---
 interface StoredFrame {
   key: string;
-  dataUrl: string; // store the full data URL
+  dataUrl: string; // full data URL (PNG base64)
   timestamp: number;
   artist: string; // reddit username of creator
   week?: number; // persisted week at creation time
+  status?: string; // 'active' | 'flagged' etc.
+}
+
+// ---- Frame storage helpers (defensive) ----
+function FRAME_LIST_KEY(postId: string){ return `frames:list:${postId}`; }
+function FRAME_DATA_KEY(postId: string, frameKey: string){ return `frames:data:${postId}:${frameKey}`; }
+
+async function loadFrameKeys(postId: string): Promise<string[]> {
+  const raw = await redis.get(FRAME_LIST_KEY(postId));
+  if (!raw) return [];
+  try { const arr = JSON.parse(raw); return Array.isArray(arr) ? arr : []; } catch { return []; }
+}
+
+async function saveFrameKeys(postId: string, keys: string[]): Promise<void> {
+  await redis.set(FRAME_LIST_KEY(postId), JSON.stringify(keys));
+}
+
+async function loadFrame(postId: string, frameKey: string): Promise<StoredFrame | null> {
+  const raw = await redis.get(FRAME_DATA_KEY(postId, frameKey));
+  if (!raw) return null;
+  if (!raw.trim()) return null; // treat empty string as deleted tombstone
+  try { return JSON.parse(raw); } catch { return null; }
+}
+
+async function deleteFrameData(postId: string, frameKey: string){
+  // Prefer redis.del if available (Devvit redis shim may or may not expose) – fallback to empty tombstone
+  const anyRedis: any = redis as any;
+  if (typeof anyRedis.del === 'function') {
+    try { await anyRedis.del(FRAME_DATA_KEY(postId, frameKey)); return; } catch {}
+  }
+  await redis.set(FRAME_DATA_KEY(postId, frameKey), '');
 }
 
 // List frames from Redis storage (canonical route)
 router.get('/api/list-frames', async (req, res) => {
+  // Robust listing that tolerates corrupt / missing entries without failing entire request.
   try {
     const { postId } = context;
     if (!postId) return res.json({ frames: [] });
     const filterWeek = req.query.week ? parseInt(String(req.query.week),10) : undefined;
     const group = req.query.group === '1' || req.query.group === 'true';
-    const frameKeysStr = await redis.get(`frames:list:${postId}`);
-    const frameKeys: string[] = frameKeysStr ? JSON.parse(frameKeysStr) : [];
-    const frames: any[] = [];
+    // New pagination params
+    const page = req.query.page ? Math.max(1, parseInt(String(req.query.page),10)) : 1;
+    const pageSizeParam = req.query.pageSize || req.query.limit; // backward compatibility
+    const pageSize = pageSizeParam ? Math.max(1, Math.min(200, parseInt(String(pageSizeParam),10))) : 50;
+    const metaOnly = req.query.meta === '1' || req.query.meta === 'true';
+    let frameKeys = await loadFrameKeys(postId);
+    const invalid: string[] = [];
+    // Sort by insertion (original order) then we will slice based on pagination *after* filtering invalids and week
+    // We iterate full list but stop if size guard triggers.
+    // Response size guard: approximate serialized JSON bytes to stay under ~3MB (safety below 4MB gRPC)
+    const MAX_BYTES = 3 * 1024 * 1024; // 3MB safety ceiling
+    let approxBytes = 0;
+    // Pre-calculate slice boundaries (we still need to know total after filtering to expose totalPages)
+    const accepted: any[] = [];
     for (const key of frameKeys) {
-      const frameDataStr = await redis.get(`frames:data:${postId}:${key}`);
-      if (!frameDataStr) continue;
-      const frameData = JSON.parse(frameDataStr);
-      if (frameData.status && frameData.status !== 'active') continue;
-      const vraw = await redis.get(`frame:votes:${postId}:${key}`);
-      let votesUp = 0, votesDown = 0; let myVote: -1|0|1 = 0;
-      if (vraw) { try { const v = JSON.parse(vraw); votesUp = v.up||0; votesDown = v.down||0; } catch{} }
       try {
-        const me = await reddit.getCurrentUsername();
-        if (me && vraw) { const v = JSON.parse(vraw); const by = v.by||{}; myVote = by[me] ?? 0; }
-      } catch {}
-      // Derive week: prefer stored week, else parse from key like frames/week-<n>/..., else compute from timestamp
-      let week: number;
-      if (typeof frameData.week === 'number') {
-        week = frameData.week;
-      } else {
-        const m = key.match(/week-(\d+)\//);
-        if (m && m[1]) {
-          week = parseInt(m[1],10);
+        const frameData = await loadFrame(postId, key);
+        if (!frameData) { invalid.push(key); continue; }
+        if (frameData.status && frameData.status !== 'active') continue;
+        // votes
+        const vraw = await redis.get(VOTES_KEY(postId, key));
+        let votesUp = 0, votesDown = 0; let myVote: -1|0|1 = 0;
+        if (vraw) { try { const v = JSON.parse(vraw); votesUp = v.up||0; votesDown = v.down||0; } catch{} }
+        try {
+          const me = await reddit.getCurrentUsername();
+          if (me && vraw) { const v = JSON.parse(vraw); const by = v.by||{}; myVote = by[me] ?? 0; }
+        } catch {}
+        // week derivation
+        let week: number;
+        if (typeof frameData.week === 'number') {
+          week = frameData.week;
         } else {
-          week = await computeWeekForTimestamp(frameData.timestamp);
-          // Backfill week into stored data for faster future loads (legacy frames)
-          frameData.week = week;
-          await redis.set(`frames:data:${postId}:${key}`, JSON.stringify(frameData));
+          const m = key.match(/week-(\d+)\//);
+          if (m && m[1]) week = parseInt(m[1],10); else {
+            week = await computeWeekForTimestamp(frameData.timestamp);
+            frameData.week = week;
+            await redis.set(FRAME_DATA_KEY(postId, key), JSON.stringify(frameData));
+          }
         }
+        if (filterWeek && week !== filterWeek) continue;
+        const frameOut = {
+          key: frameData.key,
+          lastModified: frameData.timestamp,
+          artist: frameData.artist || 'anonymous',
+          week,
+          votesUp,
+          votesDown,
+          myVote,
+          // Only send dataUrl if not metaOnly
+          url: metaOnly ? undefined : frameData.dataUrl
+        };
+        accepted.push(frameOut);
+      } catch(err:any) {
+        console.warn('[frames:list] skipping corrupt frame key', key, err?.message);
+        invalid.push(key);
       }
-      if (filterWeek && week !== filterWeek) continue;
-      frames.push({
-        key: frameData.key,
-        url: frameData.dataUrl,
-        lastModified: frameData.timestamp,
-        artist: frameData.artist || 'anonymous',
-        week,
-        votesUp,
-        votesDown,
-        myVote
-      });
     }
-    frames.sort((a,b)=> a.lastModified - b.lastModified);
+    if (invalid.length) {
+      // Clean list (best-effort, ignore errors)
+      try { frameKeys = frameKeys.filter(k => !invalid.includes(k)); await saveFrameKeys(postId, frameKeys); } catch {}
+    }
+    accepted.sort((a,b)=> a.lastModified - b.lastModified);
+    const total = accepted.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const start = (page - 1) * pageSize;
+    const pageItems = accepted.slice(start, start + pageSize);
+    // Apply size guard (truncate if necessary)
+    const safeItems: any[] = [];
+    let truncated = false;
+    for (const item of pageItems) {
+      // Rough size estimation: JSON stringify length (without actually building huge string multiple times)
+      const est = JSON.stringify(item).length + 2; // add small overhead
+      if (approxBytes + est > MAX_BYTES) { truncated = true; break; }
+      approxBytes += est;
+      safeItems.push(item);
+    }
     if (group) {
       const byWeek: Record<string, any[]> = {};
-      for (const f of frames) {
+      for (const f of safeItems) {
         const wk = (f.week ?? 0).toString();
         if(!byWeek[wk]) byWeek[wk] = [];
-        byWeek[wk].push(f);
+        const copy = { ...f };
+        if (metaOnly) delete (copy as any).url;
+        byWeek[wk].push(copy);
       }
-      return res.json({ framesByWeek: byWeek });
+      return res.json({ framesByWeek: byWeek, invalidRemoved: invalid.length, page, totalPages, pageSize, total, truncated, metaOnly });
     }
-    res.json({ frames });
+    // Remove undefined url fields to reduce payload
+    for (const f of safeItems) { if (metaOnly) delete (f as any).url; }
+    res.json({ frames: safeItems, invalidRemoved: invalid.length, page, totalPages, pageSize, total, truncated, metaOnly });
   } catch(e:any){
-    console.error('[devvit r2/frames] error', e?.message);
-    res.json({ frames: [] });
+    console.error('[devvit r2/frames] fatal list error', e?.message);
+    res.status(500).json({ frames: [], error: 'list failed', message: e?.message });
   }
 });
 
@@ -767,8 +836,8 @@ router.delete('/api/mod/frames/:key', async (req, res) => {
     const { postId } = context; const key = req.params.key; if (!postId) return res.status(400).json({ error: 'post not found' });
     const me = await reddit.getCurrentUsername(); const allowed = await isModUser(me, postId);
     if (!allowed) return res.status(403).json({ error: 'forbidden' });
-    // Remove data
-    await redis.set(`frames:data:${postId}:${key}`, '');
+  // Remove data (tombstone friendly)
+  await deleteFrameData(postId, key);
     // Ensure removed from public list
     const listRaw = await redis.get(`frames:list:${postId}`); let list: string[] = listRaw ? JSON.parse(listRaw) : [];
     list = list.filter(k => k !== key); await redis.set(`frames:list:${postId}`, JSON.stringify(list));
@@ -776,7 +845,10 @@ router.delete('/api/mod/frames/:key', async (req, res) => {
     const mqRaw = await redis.get(MOD_QUEUE_KEY(postId)); let mq: string[] = mqRaw ? JSON.parse(mqRaw) : [];
     mq = mq.filter(k => k !== key); await redis.set(MOD_QUEUE_KEY(postId), JSON.stringify(mq));
     // Clear votes
-    await redis.set(VOTES_KEY(postId, key), '');
+  // Clear votes (prefer del but fallback to empty)
+  const anyRedis: any = redis as any;
+  if (typeof anyRedis.del === 'function') { try { await anyRedis.del(VOTES_KEY(postId, key)); } catch { await redis.set(VOTES_KEY(postId, key), ''); } }
+  else { await redis.set(VOTES_KEY(postId, key), ''); }
     res.json({ ok: true });
   } catch(e:any){ res.status(500).json({ error: 'delete failed', message: e?.message }); }
 });
@@ -1180,6 +1252,22 @@ app.get('/api/debug/frames-latest', async (req, res) => {
     console.error('[devvit api/debug/frames-latest] error', e?.message);
     res.status(500).json({ error:'frames-latest failed', message:e?.message });
   }
+});
+
+// Full integrity scan (expensive) – iterate all stored frame keys and report issues.
+app.get('/api/debug/frames-integrity', async (_req, res) => {
+  try {
+    const { postId } = context; if(!postId) return res.json({ ok:false, reason:'no postId'});
+    const keys = await loadFrameKeys(postId);
+    const bad: string[] = []; const flagged: string[] = []; const ok: number[] = [];
+    for (const k of keys) {
+      const fd = await loadFrame(postId, k);
+      if (!fd) { bad.push(k); continue; }
+      if (fd.status && fd.status !== 'active') { flagged.push(k); continue; }
+      ok.push(fd.timestamp);
+    }
+    res.json({ ok:true, total: keys.length, good: ok.length, bad: bad.length, flagged: flagged.length, badKeys: bad.slice(0,50) });
+  } catch(e:any){ res.status(500).json({ ok:false, error:e?.message }); }
 });
 
 // Debug proposals endpoint

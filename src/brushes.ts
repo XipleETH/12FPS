@@ -1,10 +1,29 @@
-// Engines disponibles
-// Engines disponibles:
-//  - mangaPen: vector-like entintado con taper y jitter
-//  - pencil: (antiguo) granular; ahora usado por 'lapicero' (fino) y 'charcoal'
-//  - wash: simulación de manchas semitransparentes (acuarela)
-//  - acrylic: pincel opaco con ligera textura y borde suave
-export type BrushEngine = 'mangaPen' | 'pencil' | 'wash' | 'acrylic';
+// Available engines (extended). Existing ids kept for backward compatibility.
+//  - mangaPen: clean inking with taper & jitter
+//  - pencil: granular graphite style
+//  - wash: semi-transparent watercolor diffusion
+//  - acrylic: opaque soft-edged paint
+//  - airbrush: continuous spray with flow & build-up (low spacing)
+//  - spray: particle spray with density & scatter
+//  - splatter: large random droplets & directional scatter
+//  - smudge: color pick & smear along stroke
+//  - calligraphy: angle-based width (flat nib) with pressure variation
+//  - glow: additive luminous soft brush
+//  - pixel: single‑pixel hard brush supporting size jitter (pixel art)
+//  - multi: composite multi-stamp brush (e.g., stars/leaves); uses stamps array
+export type BrushEngine =
+  | 'mangaPen'
+  | 'pencil'
+  | 'wash'
+  | 'acrylic'
+  | 'airbrush'
+  | 'spray'
+  | 'splatter'
+  | 'smudge'
+  | 'calligraphy'
+  | 'glow'
+  | 'pixel'
+  | 'multi';
 
 export type BrushStyle = 'anime' | 'comic' | 'watercolor' | 'graffiti';
 
@@ -21,6 +40,18 @@ export interface BrushPreset {
   particleSize?: [number, number]; // spray particle radius range in px
   drip?: boolean; // graffiti drip effect for spray
   texture?: 'pencil' | 'marker' | 'rough' | 'charcoal' | 'wash' | 'acrylic' | 'none';
+  // Extended properties for new engines
+  flow?: number; // airbrush continuous flow 0..1
+  spacing?: number; // distance between dabs in px (airbrush/pixel/multi)
+  scatter?: number; // max scatter in px for particle style
+  angle?: number; // base angle in degrees (calligraphy)
+  angleJitter?: number; // 0..1 random angle variation
+  roundness?: number; // 0..1 (1 = circle, <1 squashed) for calligraphy nib
+  sizeJitter?: number; // 0..1 random size variance
+  opacityJitter?: number; // 0..1 random opacity variance
+  blendMode?: 'normal' | 'add' | 'multiply' | 'erase'; // local compositing hint
+  smudgeStrength?: number; // 0..1 proportion of picked color to carry
+  stamps?: string[]; // for multi engine (unicode / simple shape keys)
 }
 
 // Preset inicial del pincel de tinta manga: líneas nítidas con ligera variación
@@ -100,4 +131,161 @@ export const brushKits: Record<BrushStyle, BrushPreset[]> = {
 };
 
 // Helper: lista plana de todos los presets
-export const allBrushPresets = Object.values(brushKits).flat();
+export const allBrushPresets: BrushPreset[] = [
+  ...Object.values(brushKits).flat(),
+  // New extended presets (English names) appended; can be proposed in voting
+  {
+    id: 'air-soft',
+    name: 'Airbrush Soft',
+    engine: 'airbrush',
+    size: 28,
+    opacity: 0.15,
+    flow: 0.18,
+    spacing: 4,
+    jitter: 0.02,
+    hardness: 0.1,
+    texture: 'none'
+  },
+  {
+    id: 'air-ink',
+    name: 'Air Ink Mist',
+    engine: 'airbrush',
+    size: 22,
+    opacity: 0.2,
+    flow: 0.25,
+    spacing: 3,
+    jitter: 0.04,
+    hardness: 0.05,
+    texture: 'none'
+  },
+  {
+    id: 'spray-fine',
+    name: 'Spray Fine',
+    engine: 'spray',
+    size: 18,
+    opacity: 0.55,
+    density: 1.0,
+    particleSize: [0.8, 2.2],
+    scatter: 6,
+    spacing: 6,
+    texture: 'none'
+  },
+  {
+    id: 'spray-drip',
+    name: 'Spray Drip',
+    engine: 'spray',
+    size: 24,
+    opacity: 0.65,
+    density: 1.3,
+    particleSize: [1.2, 3.8],
+    scatter: 9,
+    drip: true,
+    spacing: 5,
+    texture: 'none'
+  },
+  {
+    id: 'splatter-big',
+    name: 'Splatter Big',
+    engine: 'splatter',
+    size: 34,
+    opacity: 0.85,
+    density: 0.9,
+    particleSize: [4, 18],
+    scatter: 22,
+    spacing: 14,
+    texture: 'none'
+  },
+  {
+    id: 'smudge-soft',
+    name: 'Smudge Soft',
+    engine: 'smudge',
+    size: 30,
+    opacity: 0.9,
+    smudgeStrength: 0.8,
+    spacing: 2,
+    hardness: 0.1,
+    texture: 'none'
+  },
+  {
+    id: 'calli-fine',
+    name: 'Calligraphy Fine',
+    engine: 'calligraphy',
+    size: 18,
+    opacity: 1,
+    angle: 35,
+    angleJitter: 0.08,
+    roundness: 0.3,
+    taper: 0.4,
+    spacing: 3,
+    texture: 'none'
+  },
+  {
+    id: 'calli-broad',
+    name: 'Calligraphy Broad',
+    engine: 'calligraphy',
+    size: 26,
+    opacity: 0.95,
+    angle: 15,
+    roundness: 0.25,
+    taper: 0.25,
+    spacing: 4,
+    texture: 'none'
+  },
+  {
+    id: 'glow-soft',
+    name: 'Glow Soft',
+    engine: 'glow',
+    size: 40,
+    opacity: 0.25,
+    flow: 0.2,
+    spacing: 6,
+    hardness: 0.05,
+    blendMode: 'add'
+  },
+  {
+    id: 'pixel-1',
+    name: 'Pixel 1px',
+    engine: 'pixel',
+    size: 6,
+    opacity: 1,
+    spacing: 1,
+    hardness: 1,
+    texture: 'none'
+  },
+  {
+    id: 'pixel-rect',
+    name: 'Pixel Rectangle',
+    engine: 'pixel',
+    size: 12,
+    opacity: 1,
+    spacing: 1,
+    roundness: 0.35,
+    texture: 'none'
+  },
+  {
+    id: 'multi-stars',
+    name: 'Multi Stars',
+    engine: 'multi',
+    size: 32,
+    opacity: 0.9,
+    spacing: 16,
+    scatter: 18,
+    sizeJitter: 0.5,
+    opacityJitter: 0.3,
+    stamps: ['★','✦','✧'],
+    texture: 'none'
+  },
+  {
+    id: 'multi-leaves',
+    name: 'Multi Leaves',
+    engine: 'multi',
+    size: 30,
+    opacity: 0.85,
+    spacing: 14,
+    scatter: 16,
+    sizeJitter: 0.45,
+    angleJitter: 0.6,
+    stamps: ['leaf','leaf2','dot'],
+    texture: 'none'
+  }
+];

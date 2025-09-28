@@ -124,6 +124,17 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
   const opacityMul = Math.max(0, Math.min(1, brushPreset?.opacity ?? 1));
   const jitter = Math.max(0, Math.min(1, brushPreset?.jitter ?? 0.02));
   const taper = Math.max(0, Math.min(1, brushPreset?.taper ?? 0.6));
+  const engine = brushPreset?.engine;
+  const flow = Math.max(0, Math.min(1, brushPreset?.flow ?? opacityMul));
+  const spacing = Math.max(0.5, brushPreset?.spacing ?? 2);
+  const scatter = Math.max(0, brushPreset?.scatter ?? 0);
+  const sizeJitter = Math.max(0, Math.min(1, brushPreset?.sizeJitter ?? 0));
+  const opacityJitter = Math.max(0, Math.min(1, brushPreset?.opacityJitter ?? 0));
+  const roundness = Math.max(0.05, Math.min(1, brushPreset?.roundness ?? 1));
+  const angleDeg = brushPreset?.angle ?? 0;
+  const angleJitter = Math.max(0, Math.min(1, brushPreset?.angleJitter ?? 0));
+  const blendMode = brushPreset?.blendMode || 'normal';
+  const smudgeStrength = Math.max(0, Math.min(1, brushPreset?.smudgeStrength ?? 0.5));
   // Simulación de presión: si device no da pressure, usamos velocidad inversa
   // Usar siempre el valor dinámico del slider (brushSize) como autoridad.
   // El tamaño del preset solo sirve como valor inicial cuando se selecciona (SidePanels ya hace setBrushSize(p.size)).
@@ -166,7 +177,7 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
         const d = Math.random() * r;
         return { x: pt.x + Math.cos(a) * d, y: pt.y + Math.sin(a) * d };
       };
-      if (brushPreset?.engine === 'pencil') {
+  if (engine === 'pencil') {
         // Lápiz: múltiples micro trazos puntuales dentro de un óvalo con textura aleatoria
         const steps = Math.max(1, Math.floor(dist / Math.max(1, baseSize * 0.35)));
         const dirX = (to.x - from.x) / steps;
@@ -196,7 +207,8 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
         return;
       }
       // Estilo manga (entintado): trazos vectoriales suavizados a partir de puntos bufferizados
-      if (brushPreset?.texture === 'charcoal') {
+  // Charcoal texture: treat for charcoal preset regardless of engine (supports legacy pencil)
+  if (brushPreset?.texture === 'charcoal') {
         // Carbón: múltiples manchas/granos con opacidad variable, halo suave y acumulación rápida
         const steps = Math.max(1, Math.floor(dist / Math.max(1, baseSize * 0.45)));
         const dirX = (to.x - from.x) / steps;
@@ -233,7 +245,7 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
         ctx.globalAlpha = 1;
         strokeProgressRef.current += dist;
         return;
-      } else if (brushPreset?.texture === 'marker') {
+  } else if (brushPreset?.texture === 'marker' && (engine === 'mangaPen' || engine === 'acrylic')) {
         // Simulación marcador: ancho constante, relleno múltiple de pasadas semi-opacas con leve ruido perpendicular
         const passes = 3;
         const width = Math.max(1, baseSize * 0.85);
@@ -255,6 +267,222 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
           ctx.moveTo(jf.x, jf.y);
           ctx.lineTo(jt.x, jt.y);
           ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+        strokeProgressRef.current += dist;
+        return;
+      } else if (engine === 'airbrush') {
+        const segLen = dist || 1;
+        const steps = Math.max(1, Math.floor(segLen / spacing));
+        for (let i = 0; i <= steps; i++) {
+          const t = i / steps;
+          const cx = from.x + (to.x - from.x) * t + (Math.random() - 0.5) * scatter * 0.3;
+          const cy = from.y + (to.y - from.y) * t + (Math.random() - 0.5) * scatter * 0.3;
+          const jitterScale = 1 + (Math.random() * 2 - 1) * sizeJitter * 0.6;
+          const r = Math.max(0.5, (baseSize * 0.4 + baseSize * 0.6 * simulatedPressure) * jitterScale * 0.5);
+          ctx.globalAlpha = flow * (0.5 + 0.5 * Math.random());
+          const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+          g.addColorStop(0, activeColor);
+          g.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.arc(cx, cy, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+        strokeProgressRef.current += dist;
+        return;
+      } else if (engine === 'spray') {
+        const segLen = dist || 1;
+        const steps = Math.max(1, Math.floor(segLen / spacing));
+        const [pMin, pMax] = brushPreset?.particleSize || [1, 3];
+        const densityMul = brushPreset?.density ?? 1;
+        for (let i = 0; i <= steps; i++) {
+          const t = i / steps;
+          const baseX = from.x + (to.x - from.x) * t;
+          const baseY = from.y + (to.y - from.y) * t;
+          const particles = Math.floor(6 + baseSize * 0.8 * densityMul);
+          for (let k = 0; k < particles; k++) {
+            const ang = Math.random() * Math.PI * 2;
+            const rad = Math.random() * scatter;
+            const px = baseX + Math.cos(ang) * rad;
+            const py = baseY + Math.sin(ang) * rad;
+            const pr = pMin + Math.random() * (pMax - pMin);
+            ctx.globalAlpha = opacityMul * (0.4 + 0.6 * Math.random());
+            ctx.beginPath();
+            ctx.fillStyle = activeColor;
+            ctx.arc(px, py, pr, 0, Math.PI * 2);
+            ctx.fill();
+            if (brushPreset?.drip && Math.random() < 0.01) {
+              ctx.globalAlpha = opacityMul * 0.7;
+              ctx.strokeStyle = activeColor;
+              ctx.lineWidth = pr * 0.6;
+              ctx.beginPath();
+              ctx.moveTo(px, py);
+              ctx.lineTo(px + (Math.random() - 0.5) * 2, py + pr * (2 + Math.random() * 6));
+              ctx.stroke();
+            }
+          }
+        }
+        ctx.globalAlpha = 1;
+        strokeProgressRef.current += dist;
+        return;
+      } else if (engine === 'splatter') {
+        const [pMin, pMax] = brushPreset?.particleSize || [4, 16];
+        const blobs = Math.floor(3 + (dist / 10) * (brushPreset?.density ?? 1));
+        for (let i = 0; i < blobs; i++) {
+          const t = Math.random();
+          const cx = from.x + (to.x - from.x) * t + (Math.random() - 0.5) * scatter;
+            const cy = from.y + (to.y - from.y) * t + (Math.random() - 0.5) * scatter;
+            const r = pMin + Math.random() * (pMax - pMin);
+            ctx.globalAlpha = opacityMul * (0.5 + 0.5 * Math.random());
+            ctx.beginPath();
+            ctx.fillStyle = activeColor;
+            ctx.arc(cx, cy, r, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+        strokeProgressRef.current += dist;
+        return;
+      } else if (engine === 'smudge') {
+        const steps = Math.max(1, Math.floor(dist / spacing));
+        for (let i = 0; i <= steps; i++) {
+          const t = i / steps;
+          const x = from.x + (to.x - from.x) * t;
+          const y = from.y + (to.y - from.y) * t;
+          const sampleSize = Math.max(2, baseSize * 0.5);
+          try {
+            const img = ctx.getImageData(Math.max(0, x - sampleSize / 2), Math.max(0, y - sampleSize / 2), sampleSize, sampleSize);
+            const d = img.data;
+            let r = 0, g = 0, b = 0, c = 0;
+            for (let p = 0; p < d.length; p += 4) { r += d[p]; g += d[p + 1]; b += d[p + 2]; c++; }
+            if (c > 0) {
+              r /= c; g /= c; b /= c;
+              const sr = parseInt(activeColor.slice(1, 3), 16);
+              const sg = parseInt(activeColor.slice(3, 5), 16);
+              const sb = parseInt(activeColor.slice(5, 7), 16);
+              const cr = Math.round(sr * smudgeStrength + r * (1 - smudgeStrength));
+              const cg = Math.round(sg * smudgeStrength + g * (1 - smudgeStrength));
+              const cb = Math.round(sb * smudgeStrength + b * (1 - smudgeStrength));
+              ctx.globalAlpha = opacityMul * 0.9;
+              ctx.fillStyle = `rgb(${cr},${cg},${cb})`;
+              const rad = baseSize * 0.5;
+              ctx.beginPath();
+              ctx.arc(x, y, rad, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          } catch {}
+        }
+        ctx.globalAlpha = 1;
+        strokeProgressRef.current += dist;
+        return;
+      } else if (engine === 'calligraphy') {
+        const segLen = dist || 1;
+        const steps = Math.max(1, Math.floor(segLen / spacing));
+        const baseAngle = (angleDeg * Math.PI) / 180;
+        for (let i = 0; i <= steps; i++) {
+          const t = i / steps;
+          const cx = from.x + (to.x - from.x) * t;
+          const cy = from.y + (to.y - from.y) * t;
+          const pressureScaleLocal = simulatedPressure * (0.6 + 0.4 * Math.random());
+          const w = baseSize * (1 + (Math.random() * 2 - 1) * sizeJitter * 0.4) * pressureScaleLocal;
+          const h = w * roundness;
+          const a = baseAngle + (Math.random() * 2 - 1) * angleJitter * Math.PI;
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.rotate(a);
+          ctx.globalAlpha = opacityMul * (0.8 + 0.2 * Math.random());
+          ctx.fillStyle = activeColor;
+          ctx.beginPath();
+          ctx.ellipse(0, 0, w, h, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+        ctx.globalAlpha = 1;
+        strokeProgressRef.current += dist;
+        return;
+      } else if (engine === 'glow') {
+        const prev = ctx.globalCompositeOperation;
+        if (blendMode === 'add') ctx.globalCompositeOperation = 'lighter';
+        const segLen = dist || 1;
+        const steps = Math.max(1, Math.floor(segLen / spacing));
+        for (let i = 0; i <= steps; i++) {
+          const t = i / steps;
+          const cx = from.x + (to.x - from.x) * t;
+          const cy = from.y + (to.y - from.y) * t;
+          const r = baseSize * (0.4 + 0.6 * simulatedPressure) * (0.7 + Math.random() * 0.3);
+          const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+          g.addColorStop(0, activeColor);
+          g.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.globalAlpha = opacityMul * (0.6 + 0.4 * Math.random());
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.arc(cx, cy, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = prev;
+        strokeProgressRef.current += dist;
+        return;
+      } else if (engine === 'pixel') {
+        const segLen = dist || 1;
+        const steps = Math.max(1, Math.floor(segLen / spacing));
+        const sizePx = Math.max(1, Math.round(baseSize * 0.4));
+        for (let i = 0; i <= steps; i++) {
+          const t = i / steps;
+          const cx = Math.round(from.x + (to.x - from.x) * t);
+          const cy = Math.round(from.y + (to.y - from.y) * t);
+          const jitterScaleLocal = 1 + (Math.random() * 2 - 1) * sizeJitter * 0.5;
+          const s = Math.max(1, Math.round(sizePx * jitterScaleLocal));
+          ctx.globalAlpha = opacityMul * (0.8 + 0.2 * Math.random());
+          ctx.fillStyle = activeColor;
+          ctx.fillRect(cx - s / 2, cy - s / 2, s, s);
+        }
+        ctx.globalAlpha = 1;
+        strokeProgressRef.current += dist;
+        return;
+      } else if (engine === 'multi') {
+        const segLen = dist || 1;
+        const steps = Math.max(1, Math.floor(segLen / spacing));
+        const stamps = brushPreset?.stamps || ['★'];
+        for (let i = 0; i <= steps; i++) {
+          const t = i / steps;
+          const cx = from.x + (to.x - from.x) * t + (Math.random() - 0.5) * scatter;
+          const cy = from.y + (to.y - from.y) * t + (Math.random() - 0.5) * scatter;
+          const s = baseSize * (0.5 + Math.random() * 0.5 * (1 + sizeJitter));
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.rotate(Math.random() * Math.PI * 2);
+          ctx.scale(s / 32, s / 32);
+          ctx.globalAlpha = opacityMul * (0.7 + 0.3 * Math.random() * (1 - opacityJitter));
+          ctx.fillStyle = activeColor;
+          const stamp = stamps[Math.floor(Math.random() * stamps.length)];
+          if (stamp === 'leaf' || stamp === 'leaf2') {
+            ctx.beginPath();
+            ctx.moveTo(0, -16);
+            ctx.quadraticCurveTo(14, -4, 0, 16);
+            ctx.quadraticCurveTo(-14, -4, 0, -16);
+            ctx.fill();
+          } else if (stamp === 'dot') {
+            ctx.beginPath();
+            ctx.arc(0, 0, 8, 0, Math.PI * 2);
+            ctx.fill();
+          } else {
+            ctx.beginPath();
+            for (let k = 0; k < 5; k++) {
+              const a = (k / 5) * Math.PI * 2;
+              const r1 = 16;
+              const x1 = Math.cos(a) * r1;
+              const y1 = Math.sin(a) * r1;
+              if (k === 0) ctx.moveTo(x1, y1); else ctx.lineTo(x1, y1);
+              const a2 = a + Math.PI / 5;
+              const r2 = 6;
+              ctx.lineTo(Math.cos(a2) * r2, Math.sin(a2) * r2);
+            }
+            ctx.closePath();
+            ctx.fill();
+          }
+          ctx.restore();
         }
         ctx.globalAlpha = 1;
         strokeProgressRef.current += dist;
