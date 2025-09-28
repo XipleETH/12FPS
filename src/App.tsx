@@ -86,14 +86,17 @@ function App() {
         if (!resp.ok) return;
         const data = await resp.json();
         if (Array.isArray(data.frames)) {
-          const loaded: Frame[] = data.frames.map((o: any) => ({
-            id: o.key || o.id || Math.random().toString(36).slice(2),
-            key: o.key,
-            imageData: o.url,
-            timestamp: o.lastModified || Date.now(),
-            artist: o.artist || 'anonymous',
-            paletteWeek: currentWeek
-          }));
+          const loaded: Frame[] = data.frames.map((o: any) => {
+            const wk = typeof o.week === 'number' ? o.week : (typeof o.key === 'string' && /week-(\d+)\//.test(o.key) ? parseInt(o.key.match(/week-(\d+)\//)![1],10) : currentWeek);
+            return {
+              id: o.key || o.id || Math.random().toString(36).slice(2),
+              key: o.key,
+              imageData: o.url,
+              timestamp: o.lastModified || Date.now(),
+              artist: o.artist || 'anonymous',
+              paletteWeek: wk
+            };
+          });
           const byKey = new Map<string, Frame>();
           for (const f of loaded) {
             if (!f.key) continue; const prev = byKey.get(f.key); if (!prev || f.timestamp > prev.timestamp) byKey.set(f.key, f);
@@ -363,14 +366,17 @@ function App() {
         if (lf.ok) {
           const data = await lf.json();
           if (Array.isArray(data.frames)) {
-            const loaded: Frame[] = data.frames.map((o: any) => ({
-              id: o.key || o.id || Math.random().toString(36).slice(2),
-              key: o.key,
-              imageData: o.url,
-              timestamp: o.lastModified || Date.now(),
-              artist: o.artist || 'anonymous',
-              paletteWeek: currentWeek
-            }));
+            const loaded: Frame[] = data.frames.map((o: any) => {
+              const wk = typeof o.week === 'number' ? o.week : (typeof o.key === 'string' && /week-(\d+)\//.test(o.key) ? parseInt(o.key.match(/week-(\d+)\//)![1],10) : currentWeek);
+              return {
+                id: o.key || o.id || Math.random().toString(36).slice(2),
+                key: o.key,
+                imageData: o.url,
+                timestamp: o.lastModified || Date.now(),
+                artist: o.artist || 'anonymous',
+                paletteWeek: wk
+              };
+            });
             const byKey = new Map<string, Frame>();
             for (const f of loaded) {
               if (!f.key) continue;
@@ -463,14 +469,17 @@ function App() {
         if (!resp.ok) return;
         const data = await resp.json();
         if (Array.isArray(data.frames)) {
-          const loaded: Frame[] = data.frames.map((o: any) => ({
-            id: o.key || o.id || Math.random().toString(36).slice(2),
-            key: o.key,
-            imageData: o.url,
-            timestamp: o.lastModified || Date.now(),
-            artist: o.artist || 'anonymous',
-            paletteWeek: currentWeek
-          }));
+          const loaded: Frame[] = data.frames.map((o: any) => {
+            const wk = typeof o.week === 'number' ? o.week : (typeof o.key === 'string' && /week-(\d+)\//.test(o.key) ? parseInt(o.key.match(/week-(\d+)\//)![1],10) : currentWeek);
+            return {
+              id: o.key || o.id || Math.random().toString(36).slice(2),
+              key: o.key,
+              imageData: o.url,
+              timestamp: o.lastModified || Date.now(),
+              artist: o.artist || 'anonymous',
+              paletteWeek: wk
+            };
+          });
           // Dedupe by key keeping latest timestamp
           const byKey = new Map<string, Frame>();
           for (const f of loaded) {
