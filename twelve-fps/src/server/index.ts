@@ -436,9 +436,9 @@ router.get('/api/list-frames', async (req, res) => {
     const filterWeek = req.query.week ? parseInt(String(req.query.week),10) : undefined;
     const group = req.query.group === '1' || req.query.group === 'true';
     // New pagination params
-    const page = req.query.page ? Math.max(1, parseInt(String(req.query.page),10)) : 1;
-    const pageSizeParam = req.query.pageSize || req.query.limit; // backward compatibility
-    const pageSize = pageSizeParam ? Math.max(1, Math.min(200, parseInt(String(pageSizeParam),10))) : 50;
+  let page = req.query.page ? Math.max(1, parseInt(String(req.query.page),10)) : 1;
+  const pageSizeParam = req.query.pageSize || req.query.limit; // backward compatibility
+  let pageSize = pageSizeParam ? Math.max(1, Math.min(200, parseInt(String(pageSizeParam),10))) : 50;
     const metaOnly = req.query.meta === '1' || req.query.meta === 'true';
     let frameKeys = await loadFrameKeys(postId);
     const invalid: string[] = [];
@@ -496,22 +496,42 @@ router.get('/api/list-frames', async (req, res) => {
       // Clean list (best-effort, ignore errors)
       try { frameKeys = frameKeys.filter(k => !invalid.includes(k)); await saveFrameKeys(postId, frameKeys); } catch {}
     }
-    accepted.sort((a,b)=> a.lastModified - b.lastModified);
+  // Sort newest-first BEFORE size guard so if we must degrade (remove url) we degrade older frames first
+  accepted.sort((a,b)=> b.lastModified - a.lastModified);
     const total = accepted.length;
-    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    // If no explicit pagination params provided, return ALL frames (subject to size guard w/ degradation)
+    const noExplicitPaging = !req.query.page && !req.query.pageSize && !req.query.limit;
+    if (noExplicitPaging) {
+      pageSize = total || 1;
+      page = 1;
+    }
+  const totalPages = Math.max(1, Math.ceil(total / (pageSize||1)));
     const start = (page - 1) * pageSize;
-    const pageItems = accepted.slice(start, start + pageSize);
+  const pageItems = accepted.slice(start, start + pageSize);
     // Apply size guard (truncate if necessary)
     const safeItems: any[] = [];
     let truncated = false;
-    for (const item of pageItems) {
-      // Rough size estimation: JSON stringify length (without actually building huge string multiple times)
-      const est = JSON.stringify(item).length + 2; // add small overhead
-      if (approxBytes + est > MAX_BYTES) { truncated = true; break; }
+    let autoDowngraded = false;
+    let downgradedCount = 0;
+  for (const original of pageItems) {
+      let item: any = original;
+      let est = JSON.stringify(item).length + 2;
+      if (approxBytes + est > MAX_BYTES) {
+        // Try degrade by removing url (keeps metadata so week grouping still complete)
+        if (!metaOnly && item.url) {
+          const degraded = { ...item }; delete degraded.url;
+          const estMeta = JSON.stringify(degraded).length + 2;
+            if (approxBytes + estMeta <= MAX_BYTES) {
+              item = degraded; est = estMeta; autoDowngraded = true; downgradedCount++;
+            } else { truncated = true; break; }
+        } else { truncated = true; break; }
+      }
       approxBytes += est;
       safeItems.push(item);
     }
-    if (group) {
+  // Re-sort safe items oldest-first for stable chronological consumption by clients that expect ascending order
+  safeItems.sort((a,b)=> a.lastModified - b.lastModified);
+  if (group) {
       const byWeek: Record<string, any[]> = {};
       for (const f of safeItems) {
         const wk = (f.week ?? 0).toString();
@@ -520,11 +540,11 @@ router.get('/api/list-frames', async (req, res) => {
         if (metaOnly) delete (copy as any).url;
         byWeek[wk].push(copy);
       }
-      return res.json({ framesByWeek: byWeek, invalidRemoved: invalid.length, page, totalPages, pageSize, total, truncated, metaOnly });
+      return res.json({ framesByWeek: byWeek, invalidRemoved: invalid.length, page, totalPages, pageSize, total, truncated, metaOnly, autoDowngraded, downgradedCount });
     }
     // Remove undefined url fields to reduce payload
     for (const f of safeItems) { if (metaOnly) delete (f as any).url; }
-    res.json({ frames: safeItems, invalidRemoved: invalid.length, page, totalPages, pageSize, total, truncated, metaOnly });
+    res.json({ frames: safeItems, invalidRemoved: invalid.length, page, totalPages, pageSize, total, truncated, metaOnly, autoDowngraded, downgradedCount });
   } catch(e:any){
     console.error('[devvit r2/frames] fatal list error', e?.message);
     res.status(500).json({ frames: [], error: 'list failed', message: e?.message });

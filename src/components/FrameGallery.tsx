@@ -72,6 +72,33 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
     } catch {/* ignore */}
   }, []);
 
+  // Hydration cache for frames whose imageData was omitted (degraded on backend)
+  const [hydrated, setHydrated] = useState<Record<string,string>>({});
+
+  const hydrateFrame = useCallback(async (frame: Frame) => {
+    if (!frame || !frame.key) return;
+    if (hydrated[frame.key]) return; // already hydrated
+    try {
+      // Try direct frame-data JSON endpoint first (if present in backend)
+      const metaResp = await fetch(`/api/frame-meta?key=${encodeURIComponent(frame.key)}`);
+      if (!metaResp.ok) return;
+      // For now we assume list already has week/artist, so we only need the big data
+      // Attempt to fetch binary/png by constructing legacy path portion after last '/'
+      const filePart = frame.key.split('/').pop();
+      if (!filePart) return;
+      const binResp = await fetch(`/api/frame/${encodeURIComponent(frame.key)}`); // full key variant (server expects :key)
+      if (binResp.ok) {
+        const blob = await binResp.blob();
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUrl = reader.result as string;
+          setHydrated(h => ({ ...h, [frame.key!]: dataUrl }));
+        };
+        reader.readAsDataURL(blob);
+      }
+    } catch {/* ignore */}
+  }, [hydrated]);
+
   // Dedupe: if pending frame image matches the last published frame image, suppress it
   let showPending = false;
   if (pendingFrame) {
@@ -226,7 +253,21 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
                         className="bg-white/10 backdrop-blur-sm rounded-xl overflow-hidden border border-white/10 hover:bg-white/20 transition-colors duration-200"
                       >
                         <div className="relative aspect-[480/640] bg-black/40 flex items-center justify-center">
-                          <img src={frame.imageData} alt={`Frame ${index+1}`} className="w-full h-full object-contain" loading="lazy" />
+                          { (frame.imageData || hydrated[key]) ? (
+                            <img
+                              src={frame.imageData || hydrated[key]}
+                              alt={`Frame ${index+1}`}
+                              className="w-full h-full object-contain"
+                              loading="lazy"
+                              onError={()=>{ if(!hydrated[key]) hydrateFrame(frame); }}
+                            />
+                          ) : (
+                            <button
+                              onClick={()=>hydrateFrame(frame)}
+                              className="text-white/60 text-[10px] px-2 py-1 rounded bg-white/10 hover:bg-white/20"
+                              title="Load image"
+                            >Load</button>
+                          ) }
                         </div>
                         <div className="p-2">
                           <div className="flex items-center justify-between mb-0.5">
