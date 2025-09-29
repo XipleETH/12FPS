@@ -13,6 +13,10 @@ interface SidePanelsProps {
 	setTool: (t: 'draw' | 'erase' | 'fill') => void;
 	brushSize: number;
 	setBrushSize: (n: number) => void;
+	brushSpacing?: number;
+	setBrushSpacing?: (n: number) => void;
+	brushOpacity?: number;
+	setBrushOpacity?: (n: number) => void;
 	setBrushMode: (m: 'solid' | 'soft' | 'fade' | 'spray') => void;
 	brushStyle: BrushStyle;
 	setBrushStyle: (s: BrushStyle) => void;
@@ -58,7 +62,7 @@ const PanelWrapper: React.FC<{
 );
 
 export const SidePanels: React.FC<SidePanelsProps> = (props) => {
-	const { side, toggleSide, order, setOrder, tool, setTool, brushSize, setBrushSize, setBrushMode, brushStyle, setBrushStyle, brushPresetId, setBrushPresetId, colors, activeColor, setActiveColor, currentWeek, onSave, onClear, onUndo, disabled } = props;
+	const { side, toggleSide, order, setOrder, tool, setTool, brushSize, setBrushSize, brushSpacing, setBrushSpacing, brushOpacity, setBrushOpacity, setBrushMode, brushStyle, setBrushStyle, brushPresetId, setBrushPresetId, colors, activeColor, setActiveColor, currentWeek, onSave, onClear, onUndo, disabled } = props;
 	const move = (key: PanelKey, dir: -1 | 1) => {
 		const idx = order.indexOf(key);
 		const target = idx + dir;
@@ -98,17 +102,43 @@ export const SidePanels: React.FC<SidePanelsProps> = (props) => {
 			);
 		}
 		if (key === 'brushSize') {
+			const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
+			const IconGrow = ({ className }: { className?: string }) => (<svg viewBox="0 0 24 24" className={className}><circle cx="12" cy="12" r="5" stroke="currentColor" strokeWidth="2" fill="none" /></svg>);
+			const IconShrink = ({ className }: { className?: string }) => (<svg viewBox="0 0 24 24" className={className}><circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" fill="none" /><circle cx="12" cy="12" r="3" fill="currentColor" /></svg>);
+			const IconSpacingMore = ({ className }: { className?: string }) => (<svg viewBox="0 0 24 24" className={className} stroke="currentColor" fill="none" strokeWidth="2" strokeLinecap="round"><path d="M4 12h16" strokeDasharray="2 4" /></svg>);
+			const IconSpacingLess = ({ className }: { className?: string }) => (<svg viewBox="0 0 24 24" className={className} stroke="currentColor" fill="none" strokeWidth="2" strokeLinecap="round"><path d="M4 12h16" strokeDasharray="4 2" /></svg>);
+			const IconOpacityHigh = ({ className }: { className?: string }) => (<svg viewBox="0 0 24 24" className={className} stroke="currentColor" strokeWidth="1.5" fill="none"><rect x="4" y="4" width="16" height="16" rx="2" /><path d="M4 12h16M12 4v16" opacity="0.6" /></svg>);
+			const IconOpacityLow = ({ className }: { className?: string }) => (<svg viewBox="0 0 24 24" className={className} stroke="currentColor" strokeWidth="1.5" fill="none" opacity="0.6"><rect x="4" y="4" width="16" height="16" rx="2" /></svg>);
+			const btnCls = "p-1 rounded-md bg-white/15 hover:bg-white/30 text-white disabled:opacity-30 transition";
 			return (
-				<PanelWrapper key={key} title="Brush Size" {...common}>
-					<div className="flex items-center justify-center gap-2">
-						<button onClick={() => !disabled && setBrushSize(Math.max(1, brushSize - 2))} disabled={disabled} className="px-1.5 py-0.5 text-[11px] rounded-md bg-white/15 hover:bg-white/30 text-white disabled:opacity-40">-</button>
-						<span className="text-white font-mono text-xs w-8 text-center select-none">{brushSize}</span>
-						<button onClick={() => !disabled && setBrushSize(Math.min(50, brushSize + 2))} disabled={disabled} className="px-1.5 py-0.5 text-[11px] rounded-md bg-white/15 hover:bg-white/30 text-white disabled:opacity-40">+</button>
+				<PanelWrapper key={key} title="Brush" {...common}>
+					<div className="flex flex-row justify-between gap-1">
+						{/* Size column */}
+						<div className="flex flex-col items-center gap-1 w-1/3">
+							<button onClick={() => !disabled && setBrushSize(clamp(brushSize + 2, 1, 50))} disabled={disabled} className={btnCls} aria-label="Increase size" title="Increase size"><IconGrow className="w-4 h-4" /></button>
+							<input type="range" min={1} max={50} step={1} value={brushSize} disabled={disabled} onChange={(e) => setBrushSize(Number(e.target.value))} className="h-12 w-1 accent-white/80 cursor-pointer rotate-180" aria-label="Brush size" style={{ writingMode: 'vertical-lr' }} />
+							<button onClick={() => !disabled && setBrushSize(clamp(brushSize - 2, 1, 50))} disabled={disabled} className={btnCls} aria-label="Decrease size" title="Decrease size"><IconShrink className="w-4 h-4" /></button>
+							{/* numeric label removed */}
+						</div>
+						{/* Spacing column */}
+						{setBrushSpacing && (
+							<div className="flex flex-col items-center gap-1 w-1/3">
+								<button onClick={() => !disabled && setBrushSpacing(clamp((brushSpacing ?? 4) + 1, 1, 30))} disabled={disabled} className={btnCls} aria-label="Increase spacing" title="Increase spacing"><IconSpacingMore className="w-4 h-4" /></button>
+								<input type="range" min={1} max={30} step={1} value={brushSpacing ?? 4} disabled={disabled} onChange={(e) => setBrushSpacing(Number(e.target.value))} className="h-12 w-1 accent-white/80 cursor-pointer rotate-180" aria-label="Brush spacing" style={{ writingMode: 'vertical-lr' }} />
+								<button onClick={() => !disabled && setBrushSpacing(clamp((brushSpacing ?? 4) - 1, 1, 30))} disabled={disabled} className={btnCls} aria-label="Decrease spacing" title="Decrease spacing"><IconSpacingLess className="w-4 h-4" /></button>
+								{/* numeric label removed */}
+							</div>
+						)}
+						{/* Opacity column */}
+						{setBrushOpacity && (
+							<div className="flex flex-col items-center gap-1 w-1/3">
+								<button onClick={() => { if (disabled) return; const cur = brushOpacity ?? 1; const next = clamp(cur + 0.05, 0.05, 1); setBrushOpacity(next); }} disabled={disabled} className={btnCls} aria-label="Increase opacity" title="Increase opacity"><IconOpacityHigh className="w-4 h-4" /></button>
+								<input type="range" min={5} max={100} step={1} value={Math.round((brushOpacity ?? 1) * 100)} disabled={disabled} onChange={(e) => setBrushOpacity(Number(e.target.value) / 100)} className="h-12 w-1 accent-white/80 cursor-pointer rotate-180" aria-label="Brush opacity" style={{ writingMode: 'vertical-lr' }} />
+								<button onClick={() => { if (disabled) return; const cur = brushOpacity ?? 1; const next = clamp(cur - 0.05, 0.05, 1); setBrushOpacity(next); }} disabled={disabled} className={btnCls} aria-label="Decrease opacity" title="Decrease opacity"><IconOpacityLow className="w-4 h-4" /></button>
+								{/* numeric label removed */}
+							</div>
+						)}
 					</div>
-					<div className="flex justify-center py-1">
-						<div className="rounded-full border border-white/50 shadow-sm" style={{ width: `${Math.max(8, Math.min(34, brushSize))}px`, height: `${Math.max(8, Math.min(34, brushSize))}px`, backgroundColor: activeColor, transition: 'width .15s ease, height .15s ease' }} />
-					</div>
-					<input type="range" min={1} max={50} value={brushSize} disabled={disabled} onChange={(e) => setBrushSize(Number(e.target.value))} className="w-full h-1 accent-white/80 cursor-pointer" />
 				</PanelWrapper>
 			);
 		}
@@ -129,7 +159,18 @@ export const SidePanels: React.FC<SidePanelsProps> = (props) => {
 							<div className="text-white/70 text-[11px] italic py-1">No brushes yet</div>
 						) : (
 							(brushKits[brushStyle] ?? []).map((p) => (
-								<button key={p.id} onClick={() => { setBrushPresetId(p.id); setBrushMode(p.engine); setBrushSize(p.size); }} disabled={disabled} className={`px-2 py-1 rounded-md border text-[11px] transition ${p.id === brushPresetId ? 'bg-white/30 border-white/60 text-white' : 'bg-white/10 border-white/20 text-white/80 hover:bg-white/20'}`} title={`${p.name} · ${p.engine}`}>{p.name}</button>
+								<button key={p.id} onClick={() => { 
+									setBrushPresetId(p.id); 
+									// Map arbitrary engine names to legacy brushMode types used by this older client variant
+									const engine = (p as any).engine as string;
+									let mode: 'solid' | 'soft' | 'fade' | 'spray' = 'solid';
+									if (engine === 'airbrush' || engine === 'spray') mode = 'spray';
+									else if (engine === 'wash' || engine === 'watercolor') mode = 'soft';
+									else if (engine === 'acrylic' || engine === 'mangaPen' || engine === 'ink') mode = 'solid';
+									setBrushMode(mode);
+									setBrushSize(p.size); 
+									if (setBrushSpacing) setBrushSpacing((p as any).spacing ?? 4); 
+								}} disabled={disabled} className={`px-2 py-1 rounded-md border text-[11px] transition ${p.id === brushPresetId ? 'bg-white/30 border-white/60 text-white' : 'bg-white/10 border-white/20 text-white/80 hover:bg-white/20'}`} title={`${p.name} · ${(p as any).engine}`}>{p.name}</button>
 							))
 						)}
 					</div>

@@ -55,6 +55,10 @@ function App() {
 
   const [activeColor, setActiveColor] = useState('#FF6B6B');
   const [brushSize, setBrushSize] = useState(10);
+  // Global spacing (distance between dabs / particles) override; seeded from preset on selection
+  const [brushSpacing, setBrushSpacing] = useState<number>(4);
+  // Global opacity override (painting transparency) seeded from preset.opacity (1 = fully opaque)
+  const [brushOpacity, setBrushOpacity] = useState<number>(1);
   const [brushPresetId, setBrushPresetId] = useState<string>('ink'); // actualizado ID simple
   const [isDrawing, setIsDrawing] = useState(false);
   const [frames, setFrames] = useState<Frame[]>([]);
@@ -557,6 +561,10 @@ function App() {
               setTool={setTool}
               brushSize={brushSize}
               setBrushSize={setBrushSize}
+              brushSpacing={brushSpacing}
+              setBrushSpacing={setBrushSpacing}
+              brushOpacity={brushOpacity}
+              setBrushOpacity={setBrushOpacity}
                 brushPresetId={brushPresetId}
                 setBrushPresetId={setBrushPresetId}
               colors={currentPalette}
@@ -617,6 +625,8 @@ function App() {
                       ref={canvasRef}
                       activeColor={activeColor}
                       brushSize={brushSize}
+                      brushSpacing={brushSpacing}
+                      brushOpacity={brushOpacity}
                       isDrawing={isDrawing}
                       setIsDrawing={setIsDrawing}
                       disabled={!(turnInfo && turnInfo.currentArtist === currentUser) || timeLeft === 0}

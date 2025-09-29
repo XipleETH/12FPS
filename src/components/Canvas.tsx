@@ -4,6 +4,8 @@ import type { BrushPreset } from '../brushes';
 interface CanvasProps {
   activeColor: string;
   brushSize: number;
+  brushSpacing?: number; // global spacing override (user slider)
+  brushOpacity?: number; // 0..1 override
   isDrawing: boolean;
   setIsDrawing: (drawing: boolean) => void;
   disabled?: boolean;
@@ -29,7 +31,7 @@ const DEFAULT_WIDTH = 480;
 const DEFAULT_HEIGHT = 640;
 
 export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
-  ({ activeColor, brushSize, isDrawing, setIsDrawing, disabled, brushPreset, tool = 'draw', onBeforeMutate, zoom: controlledZoom, onionImage, onionOpacity = 0.4, onDirty, restoreImage }, ref) => {
+  ({ activeColor, brushSize, brushSpacing, brushOpacity, isDrawing, setIsDrawing, disabled, brushPreset, tool = 'draw', onBeforeMutate, zoom: controlledZoom, onionImage, onionOpacity = 0.4, onDirty, restoreImage }, ref) => {
   const internalRef = useRef<HTMLCanvasElement>(null);
     const canvasRef = (ref as React.RefObject<HTMLCanvasElement>) || internalRef;
     const lastPointRef = useRef<{ x: number; y: number } | null>(null);
@@ -121,12 +123,19 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       // Resolve preset params with sensible defaults
-  const opacityMul = Math.max(0, Math.min(1, brushPreset?.opacity ?? 1));
+  const baseOpacity = Math.max(0, Math.min(1, brushPreset?.opacity ?? 1));
+  const opacityMul = Math.max(0, Math.min(1, (typeof brushOpacity === 'number' ? brushOpacity : baseOpacity)));
   const jitter = Math.max(0, Math.min(1, brushPreset?.jitter ?? 0.02));
-  const taper = Math.max(0, Math.min(1, brushPreset?.taper ?? 0.6));
+  const taper = Math.max(0, Math.min(1, brushPreset?.taper ?? 0.6)); // legacy single end taper factor
+  const taperStartEnabled = (brushPreset?.taperStart ?? (brushPreset?.taperStart === 0 ? 0 : undefined)) !== undefined ? (brushPreset?.taperStart ?? 0) > 0 : true; // default ON if dual not specified
+  const taperEndEnabled = (brushPreset?.taperEnd ?? (brushPreset?.taperEnd === 0 ? 0 : undefined)) !== undefined ? (brushPreset?.taperEnd ?? 0) > 0 : true;   // default ON
+  const taperStartFactorCfg = Math.max(0, Math.min(1, brushPreset?.taperStart ?? 1));
+  const taperEndFactorCfg   = Math.max(0, Math.min(1, brushPreset?.taperEnd ?? 1));
+  const taperStartLen = Math.max(4, brushPreset?.taperStartLength ?? 24);
+  const taperEndLen   = Math.max(4, brushPreset?.taperEndLength ?? 28);
   const engine = brushPreset?.engine;
   const flow = Math.max(0, Math.min(1, brushPreset?.flow ?? opacityMul));
-  const spacing = Math.max(0.5, brushPreset?.spacing ?? 2);
+  const spacing = Math.max(0.5, (typeof brushSpacing === 'number' ? brushSpacing : (brushPreset?.spacing ?? 2)));
   const scatter = Math.max(0, brushPreset?.scatter ?? 0);
   const sizeJitter = Math.max(0, Math.min(1, brushPreset?.sizeJitter ?? 0));
   const opacityJitter = Math.max(0, Math.min(1, brushPreset?.opacityJitter ?? 0));
@@ -145,28 +154,20 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
     // Taper aplicado según progreso de stroke (solo reducción final clásica)
   const progress = strokeProgressRef.current;
   const classicTaper = 1 - taper * Math.min(1, progress / (180 + baseSize * 14));
-  // Para efecto "punta al inicio y al final" (Ink): añadimos rampa inicial y final simétrica.
-  // Estrategia: estimar una longitud objetivo adaptativa (strokeTotalRef). Mientras no sepamos la final,
-  // aplicamos sólo la rampa inicial. Al terminar el trazo (endStroke) ya no redibujamos, así que el final
-  // debe anticiparse: usamos ventana móvil de últimos segmentos para suponer si vamos desacelerando.
-  // Simplificación: definimos una longitud de fade (fadeLen) proporcional al tamaño del pincel y un máximo.
-  const fadeLen = Math.max(12, baseSize * 3);
-  // Rampa inicial: factor aumenta de 0.15 -> 1 en fadeLen
-  const startFactor = Math.min(1, progress / fadeLen);
-  // Intento de estimación dinámica: si la velocidad es muy baja consistentemente podríamos estar al final.
-  // Para no complicar, aplicamos un pre-taper final sólo cuando strokeProgress supera 2*fadeLen:
+  // Nueva lógica dual‑taper: rampa inicial controlada + heurística final.
+  // Start ramp: sube de 0.15 a 1 en taperStartLen px (si activado)
+  const startRamp = taperStartEnabled ? (0.15 + 0.85 * Math.min(1, progress / taperStartLen)) : 1;
+  const startFactor = 1 - (1 - startRamp) * taperStartFactorCfg; // aplicar fuerza configurada
+  // End ramp heurística: si desacelera (speed bajo) y llevamos suficiente distancia, reducir.
   let endFactor = 1;
-  if (progress > 2 * fadeLen) {
-    // End factor desciende en los últimos fadeLen px del tramo reciente.
-    // Sin saber longitud total, usamos ventana: aplicamos descenso leve basado en velocidad reciente (speed).
-    const slow = Math.min(1, Math.max(0, (40 - speed) / 40)); // 0 (rápido) .. 1 (muy lento)
-    // Mezcla con proximidad a posible final (heurística: si speed < 6 => fuerte taper)
-    endFactor = 1 - 0.7 * (speed < 6 ? 1 : slow * 0.6);
-    endFactor = Math.max(0.15, endFactor);
+  if (taperEndEnabled && progress > taperEndLen) {
+    const slow = Math.min(1, Math.max(0, (34 - speed) / 34)); // 0 rápido .. 1 muy lento
+    // Cuando lento => reducir hacia 0.15, escalado por taperEndFactorCfg
+    const target = 0.15 + (1 - slow * taperEndFactorCfg) * 0.85; // entre 0.15 y ~1
+    endFactor = Math.max(0.15, Math.min(1, target));
   }
-  // Factor combinado: enfatizar inicio y final, pero nunca exceder 1 ni caer bajo 0.15 salvo control.
-  const dualTaper = Math.max(0.15, Math.min(1, startFactor * endFactor));
-  // Combinar con classicTaper (que reduce progresivo) tomando el menor para mantener afinado si aplica.
+  const dualTaper = Math.min(startFactor, endFactor);
+  // Usamos el mínimo entre classic (falloff progresivo) y dual para preservar afinamiento global.
   const taperFactor = Math.min(classicTaper, dualTaper);
 
       // Helper para jitter mínimo orgánico
@@ -200,6 +201,84 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
             ctx.fillStyle = activeColor;
             ctx.arc(gx, gy, dotR, 0, Math.PI * 2);
             ctx.fill();
+          }
+        }
+        ctx.globalAlpha = 1;
+        strokeProgressRef.current += dist;
+        return;
+      }
+      else if (engine === 'acrylic') {
+        // Enhanced acrylic: simulate multiple bristles leaving semi‑opaque paint with subtle grooves.
+        const segLen = dist || 1;
+        const steps = Math.max(1, Math.floor(segLen / Math.max(1, baseSize * 0.6)));
+        const dirX = (to.x - from.x) / steps;
+        const dirY = (to.y - from.y) / steps;
+        const dirLen = Math.hypot(to.x - from.x, to.y - from.y) || 1;
+        const nx = -dirY / (dirLen/steps || 1); // local normal approx (not normalized strictly but fine for offset)
+        const ny = dirX / (dirLen/steps || 1);
+        const bristles = Math.max(4, Math.min(64, Math.floor((brushPreset?.bristleCount ?? 18))));
+        const bristleSpread = Math.max(0.2, (brushPreset?.roundness ?? 0.7));
+        const bristleJitter = Math.max(0, Math.min(1, brushPreset?.bristleJitter ?? 0.4));
+        const wetness = Math.max(0, Math.min(1, brushPreset?.wetness ?? 0.35));
+        const impasto = Math.max(0, Math.min(1, brushPreset?.impasto ?? 0.4));
+        const texNoise = Math.max(0, Math.min(1, brushPreset?.strokeTextureNoise ?? 0.5));
+        // Precompute per‑bristle offset
+        const offsets: number[] = [];
+        for (let b = 0; b < bristles; b++) {
+          const t = (b / (bristles - 1)) - 0.5; // -0.5..0.5
+          // Distribute wider near center (ease)
+            const eased = Math.sin(t * Math.PI);
+          const spread = (baseSize * 0.6) * bristleSpread * eased;
+          const jitterOff = (Math.random() - 0.5) * baseSize * 0.15 * bristleJitter;
+          offsets.push(spread + jitterOff);
+        }
+        // Paint along small substeps to create continuous fill
+        for (let s = 0; s <= steps; s++) {
+          const cx = from.x + dirX * s;
+          const cy = from.y + dirY * s;
+          // Sample underlying color for wet blend if enabled
+          let blendR = 0, blendG = 0, blendB = 0;
+          if (wetness > 0 && s % 2 === 0) {
+            try {
+              const img = ctx.getImageData(Math.round(cx - 1), Math.round(cy - 1), 2, 2);
+              const d = img.data; let c = 0;
+              for (let i = 0; i < d.length; i += 4) { blendR += d[i]; blendG += d[i+1]; blendB += d[i+2]; c++; }
+              if (c) { blendR/=c; blendG/=c; blendB/=c; }
+            } catch {}
+          }
+          for (let b = 0; b < bristles; b++) {
+            const off = offsets[b];
+            const ox = cx + nx * off + (Math.random() - 0.5) * texNoise * 0.6;
+            const oy = cy + ny * off + (Math.random() - 0.5) * texNoise * 0.6;
+            // Local thickness varies with simulated pressure and bristle index
+            const centerFactor = 1 - Math.abs((b / (bristles - 1)) - 0.5) * 1.8;
+            const thickness = Math.max(0.4, baseSize * 0.12 + baseSize * 0.55 * simulatedPressure * centerFactor);
+            // Blend toward picked background if wetness >0
+            let col = activeColor;
+            if (wetness > 0 && (blendR + blendG + blendB) > 0) {
+              const sr = parseInt(activeColor.slice(1,3),16);
+              const sg = parseInt(activeColor.slice(3,5),16);
+              const sb = parseInt(activeColor.slice(5,7),16);
+              const mix = wetness * 0.55;
+              const rr = Math.round(sr*(1-mix) + blendR*mix);
+              const rg = Math.round(sg*(1-mix) + blendG*mix);
+              const rb = Math.round(sb*(1-mix) + blendB*mix);
+              col = `rgb(${rr},${rg},${rb})`;
+            }
+            ctx.globalAlpha = opacityMul * (0.85 + 0.15 * Math.random());
+            ctx.fillStyle = col;
+            ctx.beginPath();
+            // Slight elongated ellipse / rectangle dab
+            ctx.ellipse(ox, oy, thickness * (0.6 + Math.random()*0.4), thickness * (0.35 + Math.random()*0.4), 0, 0, Math.PI*2);
+            ctx.fill();
+            // Impasto highlight: small lighter ridge randomly for subset of bristles
+            if (impasto > 0 && Math.random() < 0.08) {
+              ctx.globalAlpha = opacityMul * impasto * 0.6;
+              ctx.fillStyle = 'rgba(255,255,255,0.9)';
+              ctx.beginPath();
+              ctx.ellipse(ox + thickness*0.1, oy - thickness*0.1, thickness*0.3, thickness*0.18, 0, 0, Math.PI*2);
+              ctx.fill();
+            }
           }
         }
         ctx.globalAlpha = 1;
@@ -245,7 +324,7 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
         ctx.globalAlpha = 1;
         strokeProgressRef.current += dist;
         return;
-  } else if (brushPreset?.texture === 'marker' && (engine === 'mangaPen' || engine === 'acrylic')) {
+  } else if (brushPreset?.texture === 'marker' && engine === 'mangaPen') {
         // Simulación marcador: ancho constante, relleno múltiple de pasadas semi-opacas con leve ruido perpendicular
         const passes = 3;
         const width = Math.max(1, baseSize * 0.85);
@@ -292,11 +371,85 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
         ctx.globalAlpha = 1;
         strokeProgressRef.current += dist;
         return;
+      } else if (engine === 'wash') {
+        // Watercolor wash: simulate semi-transparent blooms, diffusion & edge darkening.
+        const segLen = dist || 1;
+        const steps = Math.max(1, Math.floor(segLen / (spacing * 0.6)));
+        const diffusion = Math.max(0, Math.min(1, brushPreset?.diffusion ?? 0.6));
+        const bleed = Math.max(0, Math.min(1, brushPreset?.bleed ?? 0.5));
+        const granulation = Math.max(0, Math.min(1, brushPreset?.granulation ?? 0.35));
+        const edgeDarken = Math.max(0, Math.min(1, brushPreset?.edgeDarken ?? 0.65));
+        const wetness = Math.max(0, Math.min(1, brushPreset?.wetness ?? 0.75));
+        for (let i = 0; i <= steps; i++) {
+          const t = i / steps;
+          const cx = from.x + (to.x - from.x) * t;
+          const cy = from.y + (to.y - from.y) * t;
+          // Base radius grows with diffusion and simulated pressure
+          const localPressure = simulatedPressure * (0.7 + 0.3 * Math.random());
+          const baseR = baseSize * (0.8 + 0.6 * localPressure) * (0.6 + diffusion * 0.9);
+          const layers = 2 + Math.floor(2 * diffusion); // multiple translucent blooms
+          for (let L = 0; L < layers; L++) {
+            const lr = baseR * (0.55 + 0.75 * (L / layers)) * (1 + (Math.random() - 0.5) * 0.15 * (1 + diffusion));
+            const fade = 1 - L / (layers + 1);
+            const alpha = opacityMul * wetness * (0.28 + 0.5 * fade) * (0.6 + Math.random() * 0.4);
+            ctx.globalAlpha = alpha;
+            const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, lr);
+            // Inner lighter pigment -> outer slightly darker edge pooling
+            grad.addColorStop(0, activeColor);
+            const edgeAlpha = Math.min(1, alpha * (0.4 + 0.9 * edgeDarken));
+            // Darker ring via rgba using same hue but higher alpha (browser composites)
+            grad.addColorStop(0.9, activeColor);
+            grad.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = grad;
+            ctx.beginPath();
+            ctx.arc(cx, cy, lr, 0, Math.PI * 2);
+            ctx.fill();
+            // Edge darken stroke subtle
+            if (edgeDarken > 0.05) {
+              ctx.globalAlpha = edgeAlpha * 0.6;
+              ctx.strokeStyle = activeColor;
+              ctx.lineWidth = Math.max(0.5, lr * 0.07 * edgeDarken);
+              ctx.beginPath();
+              ctx.arc(cx, cy, lr * (0.92 + 0.05 * Math.random()), 0, Math.PI * 2);
+              ctx.stroke();
+            }
+            // Granulation speckles
+            if (granulation > 0.01) {
+              const speckles = Math.floor(6 + lr * 0.6 * granulation);
+              for (let s = 0; s < speckles; s++) {
+                if (Math.random() > granulation) continue;
+                const ang = Math.random() * Math.PI * 2;
+                const rad = Math.random() * lr;
+                const sx = cx + Math.cos(ang) * rad * (0.9 + 0.2 * Math.random());
+                const sy = cy + Math.sin(ang) * rad * (0.9 + 0.2 * Math.random());
+                const dotR = Math.max(0.4, baseSize * 0.08 * (0.5 + Math.random()));
+                ctx.globalAlpha = alpha * 0.5 * (0.4 + 0.6 * Math.random());
+                ctx.beginPath();
+                ctx.fillStyle = activeColor;
+                ctx.arc(sx, sy, dotR, 0, Math.PI * 2);
+                ctx.fill();
+              }
+            }
+            // Bleed feather: faint outward transparent halo
+            if (bleed > 0.05) {
+              const bleedR = lr * (1 + bleed * 0.6);
+              ctx.globalAlpha = alpha * 0.25 * bleed;
+              ctx.beginPath();
+              ctx.arc(cx, cy, bleedR, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+        }
+        ctx.globalAlpha = 1;
+        strokeProgressRef.current += dist;
+        return;
       } else if (engine === 'spray') {
         const segLen = dist || 1;
         const steps = Math.max(1, Math.floor(segLen / spacing));
         const [pMin, pMax] = brushPreset?.particleSize || [1, 3];
         const densityMul = brushPreset?.density ?? 1;
+        const basePresetSize = brushPreset?.size || baseSize;
+        const sizeScale = Math.max(0.2, Math.min(4, baseSize / basePresetSize));
         for (let i = 0; i <= steps; i++) {
           const t = i / steps;
           const baseX = from.x + (to.x - from.x) * t;
@@ -307,7 +460,7 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
             const rad = Math.random() * scatter;
             const px = baseX + Math.cos(ang) * rad;
             const py = baseY + Math.sin(ang) * rad;
-            const pr = pMin + Math.random() * (pMax - pMin);
+            const pr = (pMin + Math.random() * (pMax - pMin)) * sizeScale;
             ctx.globalAlpha = opacityMul * (0.4 + 0.6 * Math.random());
             ctx.beginPath();
             ctx.fillStyle = activeColor;
@@ -330,11 +483,13 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
       } else if (engine === 'splatter') {
         const [pMin, pMax] = brushPreset?.particleSize || [4, 16];
         const blobs = Math.floor(3 + (dist / 10) * (brushPreset?.density ?? 1));
+        const basePresetSize = brushPreset?.size || baseSize;
+        const sizeScale = Math.max(0.2, Math.min(4, baseSize / basePresetSize));
         for (let i = 0; i < blobs; i++) {
           const t = Math.random();
           const cx = from.x + (to.x - from.x) * t + (Math.random() - 0.5) * scatter;
             const cy = from.y + (to.y - from.y) * t + (Math.random() - 0.5) * scatter;
-            const r = pMin + Math.random() * (pMax - pMin);
+            const r = (pMin + Math.random() * (pMax - pMin)) * sizeScale;
             ctx.globalAlpha = opacityMul * (0.5 + 0.5 * Math.random());
             ctx.beginPath();
             ctx.fillStyle = activeColor;

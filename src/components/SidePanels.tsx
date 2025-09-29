@@ -31,6 +31,10 @@ interface SidePanelsProps {
   setTool: (t: 'draw' | 'erase' | 'fill') => void;
   brushSize: number;
   setBrushSize: (n: number) => void;
+  brushSpacing?: number;
+  setBrushSpacing?: (n: number) => void;
+  brushOpacity?: number; // 0..1 override
+  setBrushOpacity?: (n: number) => void;
   // (brush-related props removed)
   colors: string[];
   activeColor: string;
@@ -96,6 +100,10 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
   setTool,
   brushSize,
   setBrushSize,
+  brushSpacing,
+  setBrushSpacing,
+  brushOpacity,
+  setBrushOpacity,
   colors,
   activeColor,
   setActiveColor,
@@ -217,30 +225,149 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
       );
     }
     if (key === 'brushSize') {
+      const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
+      // Simple inline SVG icons for size (circle grow), spacing (dashed line), opacity (checker grid)
+      const IconGrow = ({ className }: { className?: string }) => (
+        <svg viewBox="0 0 24 24" className={className}><circle cx="12" cy="12" r="5" stroke="currentColor" strokeWidth="2" fill="none" /></svg>
+      );
+      const IconShrink = ({ className }: { className?: string }) => (
+        <svg viewBox="0 0 24 24" className={className}><circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" fill="none" /><circle cx="12" cy="12" r="3" fill="currentColor" /></svg>
+      );
+      const IconSpacingMore = ({ className }: { className?: string }) => (
+        <svg viewBox="0 0 24 24" className={className} stroke="currentColor" fill="none" strokeWidth="2" strokeLinecap="round"><path d="M4 12h16" strokeDasharray="2 4" /></svg>
+      );
+      const IconSpacingLess = ({ className }: { className?: string }) => (
+        <svg viewBox="0 0 24 24" className={className} stroke="currentColor" fill="none" strokeWidth="2" strokeLinecap="round"><path d="M4 12h16" strokeDasharray="4 2" /></svg>
+      );
+      const IconOpacityHigh = ({ className }: { className?: string }) => (
+        <svg viewBox="0 0 24 24" className={className} stroke="currentColor" strokeWidth="1.5" fill="none"><rect x="4" y="4" width="16" height="16" rx="2" /><path d="M4 12h16M12 4v16" opacity="0.6" /></svg>
+      );
+      const IconOpacityLow = ({ className }: { className?: string }) => (
+        <svg viewBox="0 0 24 24" className={className} stroke="currentColor" strokeWidth="1.5" fill="none" opacity="0.6"><rect x="4" y="4" width="16" height="16" rx="2" /></svg>
+      );
+      const btnCls = "p-1 rounded-md bg-white/15 hover:bg-white/30 text-white disabled:opacity-30 transition";
       return (
-    <PanelWrapper key={key} title="Brush Size" {...common}>
-          <div className="flex items-center justify-center gap-2">
-      <button onClick={() => !disabled && setBrushSize(Math.max(1, brushSize - 2))} disabled={disabled} className="px-1.5 py-0.5 text-[11px] rounded-md bg-white/15 hover:bg-white/30 text-white disabled:opacity-40">
-              -
-            </button>
-            <span className="text-white font-mono text-xs w-8 text-center select-none">{brushSize}</span>
-            <button onClick={() => !disabled && setBrushSize(Math.min(50, brushSize + 2))} disabled={disabled} className="px-1.5 py-0.5 text-[11px] rounded-md bg-white/15 hover:bg-white/30 text-white disabled:opacity-40">
-              +
-            </button>
+        <PanelWrapper key={key} title="Brush" {...common}>
+          <div className="flex flex-row justify-between gap-1">
+            {/* Size column */}
+            <div className="flex flex-col items-center gap-1 w-1/3">
+              <button
+                onClick={() => !disabled && setBrushSize(clamp(brushSize + 2, 1, 50))}
+                disabled={disabled}
+                className={btnCls}
+                aria-label="Increase size"
+                title="Increase size"
+              >
+                <IconGrow className="w-4 h-4" />
+              </button>
+              <input
+                type="range"
+                min={1}
+                max={50}
+                step={1}
+                value={brushSize}
+                disabled={disabled}
+                onChange={(e) => setBrushSize(Number(e.target.value))}
+                className="h-12 w-1 accent-white/80 cursor-pointer rotate-180"
+                aria-label="Brush size"
+                style={{ writingMode: 'vertical-lr' }}
+              />
+              <button
+                onClick={() => !disabled && setBrushSize(clamp(brushSize - 2, 1, 50))}
+                disabled={disabled}
+                className={btnCls}
+                aria-label="Decrease size"
+                title="Decrease size"
+              >
+                <IconShrink className="w-4 h-4" />
+              </button>
+              {/** numeric label removed per request */}
+            </div>
+            {/* Spacing column */}
+            {setBrushSpacing && (
+              <div className="flex flex-col items-center gap-1 w-1/3">
+                <button
+                  onClick={() => !disabled && setBrushSpacing(clamp((brushSpacing ?? 4) + 1, 1, 30))}
+                  disabled={disabled}
+                  className={btnCls}
+                  aria-label="Increase spacing"
+                  title="Increase spacing"
+                >
+                  <IconSpacingMore className="w-4 h-4" />
+                </button>
+                <input
+                  type="range"
+                  min={1}
+                  max={30}
+                  step={1}
+                  value={brushSpacing ?? 4}
+                  disabled={disabled}
+                  onChange={(e) => setBrushSpacing(Number(e.target.value))}
+                  className="h-12 w-1 accent-white/80 cursor-pointer rotate-180"
+                  aria-label="Brush spacing"
+                  style={{ writingMode: 'vertical-lr' }}
+                />
+                <button
+                  onClick={() => !disabled && setBrushSpacing(clamp((brushSpacing ?? 4) - 1, 1, 30))}
+                  disabled={disabled}
+                  className={btnCls}
+                  aria-label="Decrease spacing"
+                  title="Decrease spacing"
+                >
+                  <IconSpacingLess className="w-4 h-4" />
+                </button>
+                {/** numeric label removed per request */}
+              </div>
+            )}
+            {/* Opacity column */}
+            {setBrushOpacity && (
+              <div className="flex flex-col items-center gap-1 w-1/3">
+                <button
+                  onClick={() => {
+                    if (disabled) return; const current = brushOpacity ?? 1; const next = clamp(current + 0.05, 0.05, 1); setBrushOpacity(next);
+                  }}
+                  disabled={disabled}
+                  className={btnCls}
+                  aria-label="Increase opacity"
+                  title="Increase opacity"
+                >
+                  <IconOpacityHigh className="w-4 h-4" />
+                </button>
+                <input
+                  type="range"
+                  min={5}
+                  max={100}
+                  step={1}
+                  value={Math.round((brushOpacity ?? 1) * 100)}
+                  disabled={disabled}
+                  onChange={(e) => setBrushOpacity(Number(e.target.value) / 100)}
+                  className="h-12 w-1 accent-white/80 cursor-pointer rotate-180"
+                  aria-label="Brush opacity"
+                  style={{ writingMode: 'vertical-lr' }}
+                />
+                <button
+                  onClick={() => {
+                    if (disabled) return; const current = brushOpacity ?? 1; const next = clamp(current - 0.05, 0.05, 1); setBrushOpacity(next);
+                  }}
+                  disabled={disabled}
+                  className={btnCls}
+                  aria-label="Decrease opacity"
+                  title="Decrease opacity"
+                >
+                  <IconOpacityLow className="w-4 h-4" />
+                </button>
+                {/** numeric label removed per request */}
+              </div>
+            )}
           </div>
-          <div className="flex justify-center py-1">
-            <div className="rounded-full border border-white/50 shadow-sm" style={{ width: `${Math.max(8, Math.min(34, brushSize))}px`, height: `${Math.max(8, Math.min(34, brushSize))}px`, backgroundColor: activeColor, transition: 'width .15s ease, height .15s ease' }} />
-          </div>
-          <input type="range" min={1} max={50} value={brushSize} disabled={disabled} onChange={(e) => setBrushSize(Number(e.target.value))} className="w-full h-1 accent-white/80 cursor-pointer" />
         </PanelWrapper>
       );
     }
     if (key === 'brushMode') {
-  // Allowed winners or default four (ink, acrílico, marker, charcoal)
-  // Pencil removed; new brushes: acuarela, acrilico, lapicero
-  const defaultIds = ['ink','acrilico','marker','charcoal'];
-  const ids = (allowedBrushIds && allowedBrushIds.length > 0 ? allowedBrushIds : defaultIds).slice(0,4);
-  const presets: BrushPreset[] = allBrushPresets.filter(p => ids.includes(p.id));
+      // Only show first 4 allowed/ default brush presets as icon-only buttons
+      const defaultIds = ['ink','acrylic-paint','watercolor-wash','airbrush'];
+      const ids = (allowedBrushIds && allowedBrushIds.length > 0 ? allowedBrushIds : defaultIds).slice(0,4);
+      const presets: BrushPreset[] = allBrushPresets.filter(p => ids.includes(p.id));
       const InkIcon = ({ active }: { active: boolean }) => (
         <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="white" fill="none" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
           <path d="M5 19c4-1 7-4 9-8 1-2 2-4 2-6" />
@@ -254,6 +381,20 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
           <path d="M4 20h16" />
           <path d="M6 14h12l-1.5 4h-9z" />
           <path d="M8 4h8l2 6H6z" />
+        </svg>
+      );
+      const AirbrushIcon = ({ active }: { active: boolean }) => (
+        <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="white" fill="none" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.85 }}>
+          {/* Airbrush nozzle with diffuse spray dots */}
+          <path d="M5 18h4l2-4" />
+          <path d="M9 10h6l2 4H11z" />
+          <path d="M13 6h-4l-1 4" />
+          {/* Spray particles */}
+          <circle cx="17" cy="6" r="0.8" />
+          <circle cx="19" cy="5" r="0.7" />
+          <circle cx="18.5" cy="7.5" r="0.6" />
+          <circle cx="20.2" cy="6.8" r="0.5" />
+          <circle cx="21" cy="5.8" r="0.4" />
         </svg>
       );
       const AcuarelaIcon = ({ active }: { active: boolean }) => (
@@ -286,30 +427,37 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
       );
       return (
         <PanelWrapper key={key} title="Brushes" {...common}>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="flex flex-nowrap gap-2 justify-between">
             {presets.map(p => {
               const active = p.id === brushPresetId;
-        const Icon = p.id === 'ink'
-          ? InkIcon
-          : p.id === 'acrilico'
-            ? AcrilicoIcon
-            : p.id === 'acuarela'
-              ? AcuarelaIcon
-              : p.id === 'lapicero'
-                ? LapiceroIcon
-                : p.id === 'marker'
-                  ? MarkerIcon
-                  : CharcoalIcon;
+              const Icon = p.id === 'ink'
+                ? InkIcon
+                : p.id === 'acrylic-paint'
+                  ? AcrilicoIcon
+                  : p.id === 'watercolor-wash'
+                    ? AcuarelaIcon
+                    : p.id === 'pencil'
+                      ? LapiceroIcon
+                      : p.id === 'airbrush'
+                        ? AirbrushIcon
+                        : p.id === 'marker'
+                          ? MarkerIcon
+                          : CharcoalIcon;
               return (
                 <button
                   key={p.id}
                   disabled={disabled}
-                  onClick={() => { setBrushPresetId?.(p.id); setBrushSize(p.size); }}
-          className={`flex flex-col items-center gap-0.5 px-1.5 py-1 rounded-md text-white/80 hover:text-white transition ${active ? 'bg-white/15 border border-white/40' : 'hover:bg-white/10'} disabled:opacity-40`}
+                  onClick={() => {
+                    setBrushPresetId?.(p.id);
+                    setBrushSize(p.size);
+                    if (setBrushSpacing) setBrushSpacing(p.spacing ?? 4);
+                    if (setBrushOpacity) setBrushOpacity(p.opacity ?? 1);
+                  }}
+                  className={`p-1 rounded-full border flex items-center justify-center transition ${active ? 'bg-white/30 border-white/60 text-white' : 'bg-white/10 border-white/20 text-white/70 hover:bg-white/20'} disabled:opacity-40`}
+                  aria-label={p.name}
                   title={p.name}
                 >
-          <Icon active={active} />
-          <span className="text-[9px] leading-none font-medium tracking-wide">{p.name}</span>
+                  <Icon active={active} />
                 </button>
               );
             })}

@@ -35,8 +35,19 @@ export interface BrushPreset {
   opacity?: number; // 0..1
   hardness?: number; // 0..1 for soft
   taper?: number; // 0..1 amount of end taper for solid/fade
+  // New dual‑taper controls (optional). If omitted we fallback to legacy single 'taper'.
+  taperStart?: number; // 0..1 how much to taper at stroke beginning (1 = enable full start taper, 0 = none)
+  taperEnd?: number;   // 0..1 how much to taper at stroke ending (1 = full end taper)
+  taperStartLength?: number; // approximate pixel length over which to ramp up from tip to full width
+  taperEndLength?: number;   // approximate pixel length over which to ramp down near the end (heuristic – real end unknown until pointer up)
   jitter?: number; // 0..1 positional jitter factor
   density?: number; // spray particles density multiplier
+    // Watercolor / wash physical simulation parameters (optional)
+    diffusion?: number;    // 0..1 lateral spread speed
+    bleed?: number;        // 0..1 color bleed / feathering at edges
+    granulation?: number;  // 0..1 pigment clustering intensity
+    edgeDarken?: number;   // 0..1 dark edge accumulation factor
+    wetness?: number;      // 0..1 initial wetness (affects diffusion & transparency)
   particleSize?: [number, number]; // spray particle radius range in px
   drip?: boolean; // graffiti drip effect for spray
   texture?: 'pencil' | 'marker' | 'rough' | 'charcoal' | 'wash' | 'acrylic' | 'none';
@@ -52,6 +63,12 @@ export interface BrushPreset {
   blendMode?: 'normal' | 'add' | 'multiply' | 'erase'; // local compositing hint
   smudgeStrength?: number; // 0..1 proportion of picked color to carry
   stamps?: string[]; // for multi engine (unicode / simple shape keys)
+  // Acrylic / impasto specific experimental params
+  bristleCount?: number; // number of parallel bristle filaments
+  bristleJitter?: number; // 0..1 positional jitter among bristles
+  acrylicWetness?: number; // 0..1 how much acrylic blends/smears longitudinally (renamed to avoid clash with watercolor wetness)
+  impasto?: number; // 0..1 highlight thickness intensity
+  strokeTextureNoise?: number; // 0..1 noise amplitude for ridges
 }
 
 // Preset inicial del pincel de tinta manga: líneas nítidas con ligera variación
@@ -64,20 +81,29 @@ export const brushKits: Record<BrushStyle, BrushPreset[]> = {
       engine: 'mangaPen',
       size: 6,
       opacity: 1,
-      taper: 0.65, // afinado final
+      taper: 0.65, // legacy end taper factor (still used as global falloff)
+      taperStart: 1, // activar afinado inicial
+      taperEnd: 1,   // activar afinado final
+      taperStartLength: 28, // px aproximados de rampa inicial
+      taperEndLength: 34,   // px aproximados de rampa final (heurístico)
       jitter: 0.02, // mínima vibración orgánica
       texture: 'none'
     },
     {
-      id: 'acrilico',
-      name: 'Acrílico',
+      id: 'acrylic-paint', // renamed from previous 'acrilico'
+      name: 'Acrylic Paint',
       engine: 'acrylic',
       size: 10,
       opacity: 0.95,
       taper: 0.15,
       jitter: 0.04,
       hardness: 0.7,
-      texture: 'acrylic'
+      texture: 'acrylic',
+      bristleCount: 20,
+      bristleJitter: 0.45,
+  acrylicWetness: 0.38,
+      impasto: 0.5,
+      strokeTextureNoise: 0.55
     }
   ],
   comic: [
@@ -105,19 +131,24 @@ export const brushKits: Record<BrushStyle, BrushPreset[]> = {
   ],
   watercolor: [
     {
-      id: 'acuarela',
-      name: 'Acuarela',
+      id: 'watercolor-wash',
+      name: 'Watercolor Wash',
       engine: 'wash',
       size: 18,
       opacity: 0.35,
       taper: 0.4,
       jitter: 0.1,
       hardness: 0.3,
-      texture: 'wash'
+      texture: 'wash',
+      diffusion: 0.6,
+      bleed: 0.5,
+      granulation: 0.35,
+      edgeDarken: 0.7,
+      wetness: 0.75
     },
     {
-      id: 'lapicero',
-      name: 'Lapicero',
+      id: 'pencil',
+      name: 'Pencil',
       engine: 'pencil',
       size: 5,
       opacity: 0.8,
@@ -135,8 +166,8 @@ export const allBrushPresets: BrushPreset[] = [
   ...Object.values(brushKits).flat(),
   // New extended presets (English names) appended; can be proposed in voting
   {
-    id: 'air-soft',
-    name: 'Airbrush Soft',
+    id: 'airbrush',
+    name: 'Airbrush',
     engine: 'airbrush',
     size: 28,
     opacity: 0.15,
@@ -144,18 +175,6 @@ export const allBrushPresets: BrushPreset[] = [
     spacing: 4,
     jitter: 0.02,
     hardness: 0.1,
-    texture: 'none'
-  },
-  {
-    id: 'air-ink',
-    name: 'Air Ink Mist',
-    engine: 'airbrush',
-    size: 22,
-    opacity: 0.2,
-    flow: 0.25,
-    spacing: 3,
-    jitter: 0.04,
-    hardness: 0.05,
     texture: 'none'
   },
   {

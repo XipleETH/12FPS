@@ -18,6 +18,8 @@ const RootApp: React.FC = () => {
 
   const [activeColor, setActiveColor] = useState('#FF6B6B');
   const [brushSize, setBrushSize] = useState(10);
+  const [brushSpacing, setBrushSpacing] = useState<number>(4);
+  const [brushOpacity, setBrushOpacity] = useState<number>(1);
   const [isDrawing, setIsDrawing] = useState(false);
   const [frames, setFrames] = useState<Frame[]>([]);
   const [initialVotes, setInitialVotes] = useState<Record<string, { up:number; down:number; my:-1|0|1 }>>({});
@@ -87,7 +89,7 @@ const RootApp: React.FC = () => {
         <AppHeader currentView={currentView} setCurrentView={setCurrentView} />
         {currentView==='draw' && (
           <div className={`w-full flex justify-center gap-6 ${paletteSide==='left'?'flex-row':'flex-row-reverse'}`}> 
-            <SidePanels side={paletteSide} toggleSide={()=>setPaletteSide(p=>p==='right'?'left':'right')} order={panelsOrder} setOrder={setPanelsOrder} tool={tool} setTool={setTool} brushSize={brushSize} setBrushSize={setBrushSize} setBrushMode={setBrushMode} brushStyle={brushStyle} setBrushStyle={setBrushStyle} brushPresetId={brushPresetId} setBrushPresetId={setBrushPresetId} colors={currentPalette as string[]} activeColor={activeColor} setActiveColor={setActiveColor} currentWeek={currentWeek} onSave={saveFrame} onClear={clearCanvas} onUndo={undo} disabled={!isSessionActive || timeLeft===0} />
+            <SidePanels side={paletteSide} toggleSide={()=>setPaletteSide(p=>p==='right'?'left':'right')} order={panelsOrder} setOrder={setPanelsOrder} tool={tool} setTool={setTool} brushSize={brushSize} setBrushSize={setBrushSize} brushSpacing={brushSpacing} setBrushSpacing={setBrushSpacing} brushOpacity={brushOpacity} setBrushOpacity={setBrushOpacity} setBrushMode={setBrushMode} brushStyle={brushStyle} setBrushStyle={setBrushStyle} brushPresetId={brushPresetId} setBrushPresetId={setBrushPresetId} colors={currentPalette as string[]} activeColor={activeColor} setActiveColor={setActiveColor} currentWeek={currentWeek} onSave={saveFrame} onClear={clearCanvas} onUndo={undo} disabled={!isSessionActive || timeLeft===0} />
             <div ref={canvasCardRef} className="space-y-2">
               <div className="flex justify-between items-center px-0.5"><h2 className="text-xl font-semibold text-white tracking-tight">12FPS</h2></div>
               <div className="flex items-start gap-4">
@@ -108,7 +110,7 @@ const RootApp: React.FC = () => {
                   </div>
                 )}
                 <div className="inline-block rounded-xl border border-white/20 bg-white/10 backdrop-blur-sm" style={{ width: 480, height: 640 }}>
-                  <Canvas ref={canvasRef} activeColor={activeColor} brushSize={brushSize} isDrawing={isDrawing} setIsDrawing={setIsDrawing} disabled={!isSessionActive || timeLeft===0} brushMode={brushMode} brushPreset={currentPreset as any} tool={tool} onBeforeMutate={snapshotCanvas} zoom={zoom} onionImage={frames.length? frames[frames.length-1]!.imageData : undefined} onionOpacity={onionOpacity} />
+                  <Canvas ref={canvasRef} activeColor={activeColor} brushSize={brushSize} brushSpacing={brushSpacing} brushOpacity={brushOpacity} isDrawing={isDrawing} setIsDrawing={setIsDrawing} disabled={!isSessionActive || timeLeft===0} brushMode={brushMode} brushPreset={currentPreset as any} tool={tool} onBeforeMutate={snapshotCanvas} zoom={zoom} onionImage={frames.length? frames[frames.length-1]!.imageData : undefined} onionOpacity={onionOpacity} />
                 </div>
                 {paletteSide==='left' && (
                   <div className="flex flex-col gap-2 pt-2">

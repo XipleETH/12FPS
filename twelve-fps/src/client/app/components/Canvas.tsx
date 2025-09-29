@@ -4,6 +4,8 @@ import type { BrushPreset } from '../brushes';
 interface CanvasProps {
 	activeColor: string;
 	brushSize: number;
+	brushSpacing?: number; // global spacing override (parity with main app)
+	brushOpacity?: number; // 0..1 global override (currently unused)
 	isDrawing: boolean;
 	setIsDrawing: (drawing: boolean) => void;
 	disabled?: boolean;
@@ -20,7 +22,7 @@ const FIXED_WIDTH = 480; // Logical drawing width
 const FIXED_HEIGHT = 640; // Logical drawing height
 
 export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
-	({ activeColor, brushSize, isDrawing, setIsDrawing, disabled, brushMode = 'solid', brushPreset, tool = 'draw', onBeforeMutate, zoom: controlledZoom, onionImage, onionOpacity = 0.4 }, ref) => {
+	({ activeColor, brushSize, brushSpacing: _brushSpacing, brushOpacity: _brushOpacity, isDrawing, setIsDrawing, disabled, brushMode = 'solid', brushPreset, tool = 'draw', onBeforeMutate, zoom: controlledZoom, onionImage, onionOpacity = 0.4 }, ref) => {
 		const internalRef = useRef<HTMLCanvasElement>(null);
 		const canvasRef = (ref as React.RefObject<HTMLCanvasElement>) || internalRef;
 		const lastPointRef = useRef<{ x: number; y: number } | null>(null);
