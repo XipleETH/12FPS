@@ -537,9 +537,9 @@ function App() {
   };
 
   return (
-    <div className={`min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-violet-900 ${isEmbedded ? 'embedded-mode' : ''}`}>
+  <div className={`min-h-screen pencil-theme ${isEmbedded ? 'embedded-mode' : ''}`}>
       {/* Deployment badge para verificar nuevo build en Reddit */}
-      <div className="pointer-events-none select-none fixed top-1 right-2 z-[999] text-[10px] font-mono bg-indigo-700/80 text-white px-2 py-1 rounded shadow-lg tracking-tight">
+      <div className="pointer-events-none select-none fixed top-1 right-2 z-[999] text-[10px] font-mono sketch-border px-2 py-1 rounded tracking-tight">
         v0.1.0-redis-purge <span className="opacity-70">23:15Z</span>
         {toolsVersion ? <span className="ml-1 opacity-80">| tv:{toolsVersion}</span> : null}
       </div>
@@ -587,7 +587,7 @@ function App() {
               <div className="flex items-start gap-4">
                 {paletteSide === 'right' && (
                   <div className="flex flex-col gap-2 pt-2">
-                    <div className="bg-white/12 backdrop-blur-xl border border-white/20 rounded-2xl p-3 flex flex-col items-center gap-3 shadow-md select-none">
+                    <div className="sketch-border panel-hatch rounded-2xl p-3 flex flex-col items-center gap-3 select-none">
                       <div className="flex flex-col items-center gap-1">
                         <ZoomIn className="w-4 h-4 text-white/70" />
                         <input
@@ -644,7 +644,7 @@ function App() {
                 </div>
                 {paletteSide === 'left' && (
                   <div className="flex flex-col gap-2 pt-2">
-                    <div className="bg-white/12 backdrop-blur-xl border border-white/20 rounded-2xl p-3 flex flex-col items-center gap-3 shadow-md select-none">
+                    <div className="sketch-border panel-hatch rounded-2xl p-3 flex flex-col items-center gap-3 select-none">
                       <div className="flex flex-col items-center gap-1">
                         <ZoomIn className="w-4 h-4 text-white/70" />
                         <input

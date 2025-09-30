@@ -24,3 +24,127 @@ html, body {
 body {
 	padding-left: 60px;
 }
+
+/* ---------------- Pencil / Animation Paper Theme ---------------- */
+/* Base paper + hand drawn illusion utilities (non-destructive override layer) */
+.pencil-theme {
+	--paper-bg: #FAF3E0; /* warm ivory */
+	--ink: #111111;
+	--ink-soft: #222222;
+	--hatch-light: repeating-linear-gradient(135deg, rgba(0,0,0,0.06) 0 3px, rgba(0,0,0,0) 3px 6px);
+	--hatch-medium: repeating-linear-gradient(135deg, rgba(0,0,0,0.09) 0 2px, rgba(0,0,0,0) 2px 5px);
+	background: var(--paper-bg) !important;
+	color: var(--ink);
+}
+
+.pencil-theme *::selection {
+	background: rgba(17,17,17,0.15);
+	color: var(--ink);
+}
+
+/* Generic sketch border (multiple offset strokes) */
+.sketch-border {
+	position: relative;
+	border: 2px solid var(--ink);
+	box-shadow:
+		1px 1px 0 var(--ink),
+		2px 2px 0 rgba(0,0,0,0.35);
+	background: var(--paper-bg);
+}
+
+/* Light inner hatch for panels */
+.panel-hatch {
+	background-image: var(--hatch-light);
+	background-blend-mode: multiply;
+}
+
+/* Pencil button: colored / neutral with hatch & outline */
+.pencil-btn {
+	position: relative;
+	border: 2px solid var(--ink);
+	box-shadow: 1px 1px 0 var(--ink);
+	background-image: var(--hatch-light);
+	background-color: var(--paper-bg);
+	transition: background-color .15s ease, transform .15s ease;
+}
+.pencil-btn:hover:not(:disabled) {
+	transform: translate(-1px,-1px);
+	box-shadow: 2px 2px 0 var(--ink);
+}
+.pencil-btn:active:not(:disabled) {
+	transform: translate(0,0);
+	box-shadow: 1px 1px 0 var(--ink);
+}
+.pencil-btn[disabled] { opacity: .45; }
+
+/* Accent color fills retain hand-drawn texture */
+.pencil-fill-emerald { background-color: #59d7a5; }
+.pencil-fill-red { background-color: #ff7b7b; }
+.pencil-fill-indigo { background-color: #9aa6ff; }
+.pencil-fill-blue { background-color: #7fb3ff; }
+
+/* Force any leftover white text utilities to dark ink inside theme */
+.pencil-theme .text-white, .pencil-theme .text-white\/70, .pencil-theme .text-white\/80, .pencil-theme .text-white\/90 {
+	color: var(--ink) !important;
+}
+
+/* Neutralize translucent white background utility remnants */
+.pencil-theme [class*="bg-white/"] {
+	background-color: var(--paper-bg) !important;
+	backdrop-filter: none !important;
+}
+
+/* Range inputs: slim dark track & pencil thumb */
+.pencil-theme input[type=range]::-webkit-slider-runnable-track {
+	height: 4px;
+	background: var(--ink-soft);
+	border-radius: 2px;
+}
+.pencil-theme input[type=range]::-webkit-slider-thumb {
+	-webkit-appearance: none;
+	height: 14px; width: 14px; border-radius: 50%;
+	background: var(--paper-bg);
+	border: 2px solid var(--ink);
+	box-shadow: 1px 1px 0 var(--ink);
+	margin-top: -5px;
+}
+.pencil-theme input[type=range]:active::-webkit-slider-thumb {
+	transform: scale(0.9);
+}
+/* Firefox */
+.pencil-theme input[type=range]::-moz-range-track { height:4px; background:var(--ink-soft); }
+.pencil-theme input[type=range]::-moz-range-thumb { height:14px; width:14px; border-radius:50%; background:var(--paper-bg); border:2px solid var(--ink); box-shadow:1px 1px 0 var(--ink); }
+
+/* Color swatch ring mimic pencil outline */
+.pencil-theme .palette-swatch {
+	border: 2px solid var(--ink) !important;
+	box-shadow: 1px 1px 0 var(--ink) !important;
+}
+
+/* ===== Canvas styling additions ===== */
+.canvas-shell {
+	position: relative;
+	background: var(--paper-bg);
+	border: 2px solid var(--ink);
+	box-shadow: 2px 2px 0 var(--ink), 4px 4px 0 rgba(0,0,0,0.35);
+	border-radius: 10px;
+	overflow: hidden;
+}
+.canvas-shell::after {
+	content: '';
+	position: absolute; inset: 0;
+	pointer-events: none;
+	background: linear-gradient(135deg, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0) 60%);
+	mix-blend-mode: multiply;
+}
+.canvas-paper {
+	background: var(--paper-bg) !important;
+	/* faint grain */
+	background-image: radial-gradient(rgba(0,0,0,0.05) 1px, transparent 1px);
+	background-size: 12px 12px;
+}
+.canvas-paper.sketch-outline {
+	outline: 1px solid var(--ink);
+	outline-offset: -1px;
+}
+

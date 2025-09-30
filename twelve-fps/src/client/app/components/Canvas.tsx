@@ -445,7 +445,7 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
 		return (
 			<div
 				ref={containerRef}
-				className="relative border rounded-lg bg-white inline-block overflow-hidden"
+				className="canvas-shell inline-block"
 				style={{ width: FIXED_WIDTH * autoScale, height: FIXED_HEIGHT * autoScale }}
 			>
 				<div className="relative" style={{ width: FIXED_WIDTH * zoom, height: FIXED_HEIGHT * zoom }}>
@@ -456,7 +456,7 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
 						ref={canvasRef}
 						width={FIXED_WIDTH}
 						height={FIXED_HEIGHT}
-						className={`${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-crosshair'} absolute inset-0 bg-white select-none`}
+						className={`${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-crosshair'} absolute inset-0 canvas-paper sketch-outline select-none`}
 						data-drawing={isDrawing ? 'true' : 'false'}
 						style={{ width: '100%', height: '100%', touchAction: 'none' }}
 						onTouchStart={handleTouchStart}
@@ -470,8 +470,8 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
 					/>
 				</div>
 				{disabled && (
-					<div className="absolute inset-0 flex items-center justify-center bg-black/50">
-						<p className="text-white font-semibold text-lg">Start session to draw</p>
+					<div className="absolute inset-0 flex items-center justify-center bg-black/30">
+						<p className="text-sm font-semibold" style={{ color: '#111' }}>Start session to draw</p>
 					</div>
 				)}
 			</div>

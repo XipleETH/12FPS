@@ -111,7 +111,7 @@ export const SidePanels: React.FC<SidePanelsProps> = (props) => {
 			const IconOpacityLow = ({ className }: { className?: string }) => (<svg viewBox="0 0 24 24" className={className} stroke="currentColor" strokeWidth="1.5" fill="none" opacity="0.6"><rect x="4" y="4" width="16" height="16" rx="2" /></svg>);
 			const btnCls = "p-1 rounded-md bg-white/15 hover:bg-white/30 text-white disabled:opacity-30 transition";
 			return (
-				<PanelWrapper key={key} title="Brush" {...common}>
+				<PanelWrapper key={key} title="Stroke" {...common}>
 					<div className="flex flex-row justify-between gap-1">
 						{/* Size column */}
 						<div className="flex flex-col items-center gap-1 w-1/3">

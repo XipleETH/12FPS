@@ -72,22 +72,22 @@ const PanelWrapper: React.FC<{
   onDown: () => void;
   children: React.ReactNode;
 }> = ({ title, side, onToggleSide, canUp, canDown, onUp, onDown, children }) => (
-  <div className="bg-white/12 backdrop-blur-xl border border-white/20 rounded-xl shadow-md overflow-hidden flex flex-col">
-    <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-white/10">
+  <div className="sketch-border panel-hatch rounded-xl overflow-hidden flex flex-col">
+  <div className="flex items-center justify-between px-2.5 py-1.5 border-b-2 border-black/70">
       <span className="text-white/90 text-[10px] font-semibold tracking-wide flex items-center gap-1">{title}</span>
       <div className="flex items-center gap-0.5">
-        <button onClick={onUp} disabled={!canUp} className="p-1 rounded-md bg-white/10 hover:bg-white/25 disabled:opacity-30 text-white" aria-label="Mover arriba">
+  <button onClick={onUp} disabled={!canUp} className="p-1 rounded-md pencil-btn disabled:opacity-30" aria-label="Mover arriba">
           <MoveUp className="w-3 h-3" />
         </button>
-        <button onClick={onDown} disabled={!canDown} className="p-1 rounded-md bg-white/10 hover:bg-white/25 disabled:opacity-30 text-white" aria-label="Mover abajo">
+  <button onClick={onDown} disabled={!canDown} className="p-1 rounded-md pencil-btn disabled:opacity-30" aria-label="Mover abajo">
           <MoveDown className="w-3 h-3" />
         </button>
-        <button onClick={onToggleSide} className="p-1 rounded-md bg-white/10 hover:bg-white/25 text-white" aria-label="Cambiar lado" title="Cambiar lado">
+  <button onClick={onToggleSide} className="p-1 rounded-md pencil-btn" aria-label="Cambiar lado" title="Cambiar lado">
           {side === 'right' ? <ChevronLeft className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
         </button>
       </div>
     </div>
-    <div className="p-2.5 flex flex-col gap-2.5">{children}</div>
+  <div className="p-2.5 flex flex-col gap-2.5">{children}</div>
   </div>
 );
 
@@ -177,13 +177,13 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
                   );
                 })()
               )}
-              <button onClick={() => !disabled && onSave()} disabled={disabled} aria-label="Save Frame" className="p-2 rounded-full bg-emerald-500/70 hover:bg-emerald-500 text-white disabled:opacity-40 transition">
+              <button onClick={() => !disabled && onSave()} disabled={disabled} aria-label="Save Frame" className="p-2 rounded-full pencil-btn pencil-fill-emerald disabled:opacity-40 transition">
                 <Save className="w-4 h-4" />
               </button>
-              <button onClick={() => !disabled && onUndo?.()} disabled={disabled} aria-label="Undo" title="Undo" className="p-2 rounded-full bg-indigo-500/70 hover:bg-indigo-500 text-white disabled:opacity-40 transition">
+              <button onClick={() => !disabled && onUndo?.()} disabled={disabled} aria-label="Undo" title="Undo" className="p-2 rounded-full pencil-btn pencil-fill-indigo disabled:opacity-40 transition">
                 <Undo2 className="w-4 h-4" />
               </button>
-              <button onClick={() => !disabled && onClear()} disabled={disabled} aria-label="Clear Canvas" className="p-2 rounded-full bg-red-500/70 hover:bg-red-500 text-white disabled:opacity-40 transition">
+              <button onClick={() => !disabled && onClear()} disabled={disabled} aria-label="Clear Canvas" className="p-2 rounded-full pencil-btn pencil-fill-red disabled:opacity-40 transition">
                 <Trash2 className="w-4 h-4" />
               </button>
             </div>
@@ -211,9 +211,7 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
                 disabled={disabled}
                 aria-label={t}
                 title={t}
-                className={`p-1.5 rounded-full border transition flex items-center justify-center ${
-                  tool === t ? 'bg-white/30 border-white/60 text-white' : 'bg-white/10 border-white/20 text-white/70 hover:bg-white/20'
-                } disabled:opacity-40`}
+                className={`p-1.5 rounded-full pencil-btn transition flex items-center justify-center ${tool === t ? 'ring-2 ring-black' : ''} disabled:opacity-40`}
               >
                 {t === 'draw' && <Pencil className="w-4 h-4" />}
                 {t === 'erase' && <Eraser className="w-4 h-4" />}
@@ -245,9 +243,9 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
       const IconOpacityLow = ({ className }: { className?: string }) => (
         <svg viewBox="0 0 24 24" className={className} stroke="currentColor" strokeWidth="1.5" fill="none" opacity="0.6"><rect x="4" y="4" width="16" height="16" rx="2" /></svg>
       );
-      const btnCls = "p-1 rounded-md bg-white/15 hover:bg-white/30 text-white disabled:opacity-30 transition";
+  const btnCls = "p-1 rounded-md pencil-btn disabled:opacity-30";
       return (
-        <PanelWrapper key={key} title="Brush" {...common}>
+        <PanelWrapper key={key} title="Stroke" {...common}>
           <div className="flex flex-row justify-between gap-1">
             {/* Size column */}
             <div className="flex flex-col items-center gap-1 w-1/3">
@@ -369,14 +367,14 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
       const ids = (allowedBrushIds && allowedBrushIds.length > 0 ? allowedBrushIds : defaultIds).slice(0,4);
       const presets: BrushPreset[] = allBrushPresets.filter(p => ids.includes(p.id));
       const InkIcon = ({ active }: { active: boolean }) => (
-        <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="white" fill="none" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
+        <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="black" fill="none" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.85 }}>
           <path d="M5 19c4-1 7-4 9-8 1-2 2-4 2-6" />
           <path d="M15 5c0 2-1.2 3.2-2.4 4.4C10.8 11.2 9 13 8 16l-.7 2.1" />
           <path d="M4 21h16" />
         </svg>
       );
       const AcrilicoIcon = ({ active }: { active: boolean }) => (
-        <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="white" fill="none" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
+        <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="black" fill="none" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
           {/* Stylized flat brush with bristles */}
           <path d="M4 20h16" />
           <path d="M6 14h12l-1.5 4h-9z" />
@@ -384,7 +382,7 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
         </svg>
       );
       const AirbrushIcon = ({ active }: { active: boolean }) => (
-        <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="white" fill="none" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.85 }}>
+        <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="black" fill="none" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.85 }}>
           {/* Airbrush nozzle with diffuse spray dots */}
           <path d="M5 18h4l2-4" />
           <path d="M9 10h6l2 4H11z" />
@@ -398,14 +396,14 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
         </svg>
       );
       const AcuarelaIcon = ({ active }: { active: boolean }) => (
-        <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="white" fill="none" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
+        <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="black" fill="none" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
           {/* Droplet + soft stroke */}
           <path d="M12 3c-2.5 3-4 5.5-4 7.5A4 4 0 0 0 12 15a4 4 0 0 0 4-4.5C16 8.5 14.5 6 12 3Z" />
           <path d="M5 19c4-1.2 10-.8 14 0" />
         </svg>
       );
       const LapiceroIcon = ({ active }: { active: boolean }) => (
-        <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="white" fill="none" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
+        <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="black" fill="none" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
           {/* Ballpoint pen silhouette */}
           <path d="M5 16 14.5 6.5a2.2 2.2 0 0 1 3 3L8 19l-4 1 1-4Z" />
           <path d="m14.5 6.5 3 3" />
@@ -413,13 +411,13 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
         </svg>
       );
       const MarkerIcon = ({ active }: { active: boolean }) => (
-        <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="white" fill="none" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
+        <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="black" fill="none" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
           <path d="M4 20h16" />
           <path d="M7 16 15.5 4.5a2.1 2.1 0 0 1 3 2.9L11 19l-4 1 1-4Z" />
         </svg>
       );
       const CharcoalIcon = ({ active }: { active: boolean }) => (
-        <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="white" fill="none" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
+        <svg viewBox="0 0 24 24" className="w-5 h-5" stroke="black" fill="none" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: active ? 1 : 0.8 }}>
           <path d="M5 19c2.5-1.2 5-2.4 7.2-5.2 1.8-2.2 2.8-4.4 3.3-6.5" />
           <path d="M9 18c1.2-.6 2.4-1.3 3.5-2.4 2.4-2.3 3.8-5.3 4.3-8.1" />
           <path d="M4 21h16" />
@@ -453,7 +451,7 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
                     if (setBrushSpacing) setBrushSpacing(p.spacing ?? 4);
                     if (setBrushOpacity) setBrushOpacity(p.opacity ?? 1);
                   }}
-                  className={`p-1 rounded-full border flex items-center justify-center transition ${active ? 'bg-white/30 border-white/60 text-white' : 'bg-white/10 border-white/20 text-white/70 hover:bg-white/20'} disabled:opacity-40`}
+                  className={`p-1 rounded-full pencil-btn flex items-center justify-center transition ${active ? 'ring-2 ring-black' : ''} disabled:opacity-40`}
                   aria-label={p.name}
                   title={p.name}
                 >
@@ -474,7 +472,7 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
               <button
                 key={color}
                 onClick={() => setActiveColor(color)}
-                className={`w-8 h-8 rounded-full relative transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-white/70 shadow-sm hover:scale-110 ${active ? 'ring-4 ring-white/70 scale-110' : 'ring-2 ring-white/10'}`}
+                className={`palette-swatch w-8 h-8 rounded-full relative transition-all duration-200 focus:outline-none hover:scale-110 ${active ? 'scale-110 ring-2 ring-black' : ''}`}
                 style={{ backgroundColor: color }}
                 title={color}
               >

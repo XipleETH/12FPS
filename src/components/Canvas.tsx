@@ -30,11 +30,13 @@ interface CanvasProps {
 const DEFAULT_WIDTH = 480;
 const DEFAULT_HEIGHT = 640;
 
-export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
-  ({ activeColor, brushSize, brushSpacing, brushOpacity, isDrawing, setIsDrawing, disabled, brushPreset, tool = 'draw', onBeforeMutate, zoom: controlledZoom, onionImage, onionOpacity = 0.4, onDirty, restoreImage }, ref) => {
+export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(({
+  activeColor, brushSize, brushSpacing, brushOpacity, isDrawing, setIsDrawing, disabled,
+  brushPreset, tool = 'draw', onBeforeMutate, zoom: controlledZoom, onionImage, onionOpacity = 0.4, onDirty, restoreImage
+}, ref) => {
   const internalRef = useRef<HTMLCanvasElement>(null);
-    const canvasRef = (ref as React.RefObject<HTMLCanvasElement>) || internalRef;
-    const lastPointRef = useRef<{ x: number; y: number } | null>(null);
+  const canvasRef = (ref as React.RefObject<HTMLCanvasElement>) || internalRef;
+  const lastPointRef = useRef<{ x: number; y: number } | null>(null);
   const strokeProgressRef = useRef<number>(0); // distancia acumulada
   // Buffer para estabilización (line smoothing) tipo ventana móvil
   const smoothBuffer = useRef<Array<{x:number;y:number;t:number;pressure:number}>>([]);
@@ -1146,7 +1148,7 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
     return (
       <div
         ref={containerRef}
-        className="relative border rounded-lg bg-white inline-block overflow-hidden"
+        className="canvas-shell inline-block"
         style={{ width: displaySize.w, height: displaySize.h }}
       >
         <div
@@ -1157,13 +1159,13 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
             <img
               src={onionImage}
               alt="previous frame"
-              className="absolute inset-0 pointer-events-none"
+              className="absolute inset-0 pointer-events-none canvas-paper"
               style={{ width: '100%', height: '100%', objectFit: 'fill', opacity: 1 }}
             />
           )}
           <canvas
             ref={canvasRef}
-            className={`${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-crosshair'} absolute inset-0 bg-white select-none transition-opacity`}
+            className={`${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-crosshair'} absolute inset-0 canvas-paper sketch-outline select-none transition-opacity`}
             data-drawing={isDrawing ? 'true' : 'false'}
             style={{
               width: '100%',
@@ -1182,8 +1184,8 @@ export const Canvas = forwardRef<HTMLCanvasElement, CanvasProps>(
           />
         </div>
         {disabled && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-            <p className="text-white font-semibold text-lg">Start session to draw</p>
+          <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+            <p className="text-sm font-semibold" style={{ color: '#111' }}>Inicia sesión para dibujar</p>
           </div>
         )}
       </div>
