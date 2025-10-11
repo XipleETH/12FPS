@@ -159,11 +159,12 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
                 };
                 const aria = state === 'finalize' ? 'Finalize Turn' : state === 'start' ? 'Start Turn' : 'Wait Turn';
                 const title = aria;
-                // Background/border per state
+                // Background/border per state (static colors): finalize = solid black, wait = solid blue
+                // Use ! to override base styles from pencil-btn if any
                 const cls = state === 'wait'
-                  ? 'bg-blue-500/30 cursor-not-allowed'
+                  ? '!bg-blue-600 hover:!bg-blue-600 cursor-not-allowed'
                   : state === 'finalize'
-                    ? 'bg-black/90 hover:bg-black'
+                    ? '!bg-black hover:!bg-black'
                     : 'bg-white hover:bg-white/90 border border-black/80';
                 // Text/icon color per state
                 const textCls = state === 'start' ? 'text-black' : 'text-white';
@@ -176,7 +177,7 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
                     onClick={onClick}
                     aria-label={aria}
                     title={title}
-                    className={`p-2 rounded-full ${textCls} transition focus:outline-none focus:ring-2 ${ringCls} ${cls}`}
+                    className={`p-2 rounded-full pencil-btn ${textCls} transition focus:outline-none focus:ring-2 ${ringCls} ${cls}`}
                     disabled={isDisabled}
                   >
                     <Icon className={`w-4 h-4 ${iconCls}`} />
