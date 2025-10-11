@@ -100,14 +100,7 @@ async function ensureCurrentWeek(): Promise<number> {
   return storedWeek;
 }
 
-function getWeekBoundaries(_week: number) { // underscore prefix to signal intentional unused param (TS/ESLint)
-  // Need anchor to compute boundaries
-  // (Caller should have called ensureCurrentWeek once in request path to guarantee anchor exists.)
-  return {
-    startMs: 0,
-    endMs: 0,
-  };
-}
+// getWeekBoundaries removed; use getAccurateWeekBoundaries(week) instead.
 
 async function getAccurateWeekBoundaries(week: number) {
   const anchorStr = await redis.get(WEEK_ANCHOR_KEY);
@@ -241,8 +234,8 @@ async function loadTurn(): Promise<TurnState> {
   if (raw) {
     try {
       const parsed: TurnState = JSON.parse(raw);
-      // Reset window if expired
-      if (now >= parsed.windowEnd) {
+      // If there was an active turn and it expired, reset to idle
+      if (parsed.started && parsed.windowEnd > 0 && now >= parsed.windowEnd) {
         return await resetTurnWindow();
       }
       return parsed;
@@ -254,10 +247,8 @@ async function loadTurn(): Promise<TurnState> {
 }
 
 async function resetTurnWindow(): Promise<TurnState> {
-  const now = Date.now();
-  const start = now; // start immediately when reset
-  const end = start + TWO_HOURS_MS;
-  const state: TurnState = { currentArtist: null, windowStart: start, windowEnd: end, started: false, pendingFrame: null };
+  // Idle state: no active artist and no ticking window
+  const state: TurnState = { currentArtist: null, windowStart: 0, windowEnd: 0, started: false, pendingFrame: null };
   await redis.set(TURN_KEY, JSON.stringify(state));
   return state;
 }
@@ -270,7 +261,9 @@ router.get('/api/turn', async (_req, res) => {
   try {
     const state = await loadTurn();
     const now = Date.now();
-    const timeToEndSeconds = Math.max(0, Math.floor((state.windowEnd - now)/1000));
+    const timeToEndSeconds = (state.started && state.currentArtist)
+      ? Math.max(0, Math.floor((state.windowEnd - now) / 1000))
+      : 0;
     res.json({
       currentArtist: state.currentArtist,
       windowStart: state.windowStart,
@@ -286,18 +279,35 @@ router.get('/api/turn', async (_req, res) => {
 
 router.post('/api/turn', async (_req, res) => {
   try {
-    const username = await reddit.getCurrentUsername() || 'anonymous';
+    // Resolve identity from Reddit (preferred) or client-provided fallback
+    const resolveUser = async (req: any): Promise<string> => {
+      try {
+        const u = await reddit.getCurrentUsername();
+        if (u) return u;
+      } catch {}
+      const bodyUser = typeof req?.body?.user === 'string' && req.body.user.trim() ? req.body.user.trim() : '';
+      const headerUser = typeof req?.headers?.['x-user'] === 'string' && (req.headers['x-user'] as string).trim() ? (req.headers['x-user'] as string).trim() : '';
+      return bodyUser || headerUser || 'anonymous';
+    };
+    const username = await resolveUser(_req);
     let state = await loadTurn();
     const now = Date.now();
-    // If window expired, reset then allow claim
-    if (now >= state.windowEnd) {
+    // If expired while active, reset to idle then allow claim
+    if (state.started && state.windowEnd > 0 && now >= state.windowEnd) {
       state = await resetTurnWindow();
     }
     if (!state.started || !state.currentArtist) {
       // first come first serve claim
       state.currentArtist = username;
       state.started = true;
+      // Start 2h window at claim time
+      state.windowStart = now;
+      state.windowEnd = now + TWO_HOURS_MS;
       await saveTurn(state);
+      return res.json({ ok: true, claimed: true, currentArtist: state.currentArtist });
+    }
+    // If same user as current artist, confirm continuity
+    if (state.currentArtist === username) {
       return res.json({ ok: true, claimed: true, currentArtist: state.currentArtist });
     }
     return res.json({ ok: true, claimed: false, currentArtist: state.currentArtist });
@@ -323,7 +333,17 @@ router.get('/api/pending-frame', async (_req, res) => {
 
 router.post('/api/pending-frame', async (req, res) => {
   try {
-    const username = await reddit.getCurrentUsername() || 'anonymous';
+    // Resolve identity from Reddit (preferred) or client-provided fallback header/body
+    const resolveUser = async (): Promise<string> => {
+      try {
+        const u = await reddit.getCurrentUsername();
+        if (u) return u;
+      } catch {}
+      const bodyUser = typeof req?.body?.user === 'string' && req.body.user.trim() ? req.body.user.trim() : '';
+      const headerUser = typeof req?.headers?.['x-user'] === 'string' && (req.headers['x-user'] as string).trim() ? (req.headers['x-user'] as string).trim() : '';
+      return bodyUser || headerUser || 'anonymous';
+    };
+    const username = await resolveUser();
     let state = await loadTurn();
     if (username !== state.currentArtist) return res.status(403).json({ error: 'not artist' });
     const { dataUrl } = req.body || {};
@@ -357,6 +377,8 @@ router.post('/api/finalize-turn', async (_req, res) => {
     if (!postId) return res.status(400).json({ error: 'post not found' });
     // Persist pending frame if present
     if (state.pendingFrame && state.currentArtist) {
+      // Ensure week anchor/current week exist before computing week for timestamp
+      await ensureCurrentWeek();
       const ts = await nowMs();
       const week = await computeWeekForTimestamp(ts);
       const frameData: StoredFrame = {
@@ -433,6 +455,8 @@ router.get('/api/list-frames', async (req, res) => {
   try {
     const { postId } = context;
     if (!postId) return res.json({ frames: [] });
+    // Ensure week anchor and current week are materialized for correct week computations
+    await ensureCurrentWeek();
     const filterWeek = req.query.week ? parseInt(String(req.query.week),10) : undefined;
     const group = req.query.group === '1' || req.query.group === 'true';
     // New pagination params
@@ -961,9 +985,10 @@ router.post('/api/rollover-week', async (_req,res)=>{
   try {
     const { postId } = context; if(!postId) return res.status(400).json({ error:'post not found' });
     const currentWeek = await ensureCurrentWeek();
-    const { endMs } = getWeekBoundaries(currentWeek);
-    const now = Date.now();
-    if(now <= endMs) return res.json({ rolled:false, reason:'week not ended', currentWeek });
+    // Use accurate boundaries from stored anchor and simulated current time
+    const bounds = await getAccurateWeekBoundaries(currentWeek);
+    const now = await nowMs();
+    if(now <= bounds.endMs) return res.json({ rolled:false, reason:'week not ended', currentWeek });
     const proposalsStr = await redis.get(WEEK_PROPOSALS_KEY(postId, currentWeek));
     const proposals = proposalsStr ? JSON.parse(proposalsStr) : [];
     const paletteWinner = pickWinner(proposals.filter((p:any)=>p.type==='palette')) || null;

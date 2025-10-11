@@ -55,16 +55,7 @@ function computeState(){
   const timeToEnd = win.end - now;
   const lobbyOpen = true;
   const pickingPhase = false;
-  // At exact start of new window: clear previous selection
-  // At window start selection should already be made from previous window's lobby. We ensure selection for current window by checking lastSelected.windowStart.
-  // Force artist override (development)
-  const FORCED_USER = 'Consistent_Reply_557';
-  if (!lastSelected || lastSelected.windowStart !== win.start){
-    lastSelected = { user: FORCED_USER, windowStart: win.start };
-  } else if (lastSelected.user !== FORCED_USER) {
-    // Maintain forced user even if prior selection existed
-    lastSelected = { user: FORCED_USER, windowStart: win.start };
-  }
+  // No forced artist: remain idle until a client claims the turn
   return {
     now,
     offsetMs: timeOffsetMs,
@@ -78,7 +69,7 @@ function computeState(){
   pickingPhase, // deprecated (always false)
     lobby: Array.from(lobby),
   currentArtist: lastSelected ? lastSelected.user : null,
-  forcedArtist: true,
+  forcedArtist: false,
     selectionFinal: !!lastSelected,
     lobbyOpensIn: 0,
     pickIn: 0
@@ -112,8 +103,9 @@ export default async function handler(req,res){
         lastSelected = { user: st.lobby[Math.floor(Math.random()*st.lobby.length)], windowStart: st.windowStart };
         return res.status(200).json(computeState());
       case 'finalize':
-        // Clearing selection early ends artist's exclusive window (but next window not started yet) -> allow re-open lobby until pick time again? Simplicity: just keep same selection.
-        return res.status(200).json({ ok:true });
+        // Clear current selection and return to idle
+        lastSelected = null;
+        return res.status(200).json(computeState());
       case 'fastForwardLobby':
         {
           // Force jump to next window start, select immediately
@@ -123,6 +115,11 @@ export default async function handler(req,res){
             // After adjusting time, a computeState call will auto select from lobby (if any)
             return res.status(200).json(computeState());
         }
+      case 'start':
+      case 'resume':
+        // Claim the current window for this user
+        lastSelected = { user, windowStart: computeState().windowStart };
+        return res.status(200).json(computeState());
       default:
         return res.status(400).json({ error:'unknown action' });
     }

@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { Vote, TrendingUp, Users, RefreshCw, Clock } from 'lucide-react';
 import { allBrushPresets } from '../brushes';
 
 interface PaletteVotingProps {}
@@ -8,26 +7,15 @@ interface Proposal {
   id: string;
   type: 'palette' | 'theme' | 'brushKit';
   title: string;
-  data: any; // colors array for palette, description for theme, modes array for brushKit
+  data: any;
   proposedBy: string;
   proposedAt: number;
   votes: number;
   voters: string[];
 }
 
-interface VotingStats {
-  totalVotes: number;
-  activeVoters: number;
-  totalProposals: number;
-}
-
 export const PaletteVoting: React.FC<PaletteVotingProps> = () => {
-  type SubPage = 'palettes' | 'themes' | 'brushes';
-  const [subPage, setSubPage] = useState<SubPage>('palettes');
-  
-  // Real data from Reddit/Devvit
   const [proposals, setProposals] = useState<Proposal[]>([]);
-  const [votingStats, setVotingStats] = useState<VotingStats>({ totalVotes: 0, activeVoters: 0, totalProposals: 0 });
   const [currentUser, setCurrentUser] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -35,500 +23,236 @@ export const PaletteVoting: React.FC<PaletteVotingProps> = () => {
 
   useEffect(()=>{ let cancel=false; (async()=>{ try { const r= await fetch('/api/week'); if(r.ok){ const j= await r.json(); if(!cancel) setCurrentWeek(j.week); } } catch{} })(); return ()=>{cancel=true}; },[]);
 
-  // Load data from Reddit/Devvit endpoints
   const loadData = useCallback(async () => {
     try {
-      const [proposalsRes, statsRes, userRes] = await Promise.all([
+      const [proposalsRes, userRes] = await Promise.all([
         fetch(`/api/proposals?week=${currentWeek}`),
-        fetch(`/api/voting-stats?week=${currentWeek}`),
         fetch('/api/user')
       ]);
-      
       if (proposalsRes.ok) {
         const proposalsData = await proposalsRes.json();
         setProposals(proposalsData.proposals || []);
       }
-      
-      if (statsRes.ok) {
-        const statsData = await statsRes.json();
-        setVotingStats(statsData);
-      }
-      
       if (userRes.ok) {
         const userData = await userRes.json();
         setCurrentUser(userData.username);
       }
     } catch (e) {
-      console.error('[PaletteVoting] error loading data', e);
-    } finally {
-      setLoading(false);
-    }
+      console.error('[PaletteVoting] load error', e);
+    } finally { setLoading(false); }
   }, [currentWeek]);
 
-  // Load data on mount
-  useEffect(() => {
-    loadData();
-  }, [loadData, currentWeek]);
+  useEffect(()=>{ loadData(); }, [loadData]);
 
-  // Hash routing for subpages
-  useEffect(() => {
-    const parse = () => {
-      const h = window.location.hash.toLowerCase();
-  if (h.includes('/voting/themes')) setSubPage('themes');
-  else if (h.includes('/voting/brushes')) setSubPage('brushes');
-      else setSubPage('palettes');
-    };
-    parse();
-    const onHash = () => parse();
-    window.addEventListener('hashchange', onHash);
-    return () => window.removeEventListener('hashchange', onHash);
-  }, []);
+  interface CombinedSet { groupId: string; theme: Proposal; palette: Proposal; brushes: Proposal; }
+  const combinedSets: CombinedSet[] = useMemo(()=>{
+    const byGroup: Record<string, Partial<CombinedSet>> = {};
+    for (const p of proposals) {
+      const gid = p.data?.groupId; if (!gid) continue;
+      if (!byGroup[gid]) byGroup[gid] = { groupId: gid } as any;
+      if (p.type === 'theme') (byGroup[gid] as any).theme = p;
+      else if (p.type === 'palette') (byGroup[gid] as any).palette = p;
+      else if (p.type === 'brushKit') (byGroup[gid] as any).brushes = p;
+    }
+    const sets = Object.values(byGroup)
+      .filter(g => g.theme && g.palette && g.brushes)
+      .map(g => g as CombinedSet)
+      .sort((a,b)=> (b.theme.votes + b.palette.votes + b.brushes.votes) - (a.theme.votes + a.palette.votes + a.brushes.votes));
+    // Persist top winner locally (theme/palette/brushes/director) for App & Gallery consumption
+    if (sets.length) {
+      try {
+        const top = sets[0];
+        const paletteColors: string[] = (Array.isArray(top.palette.data)? top.palette.data : top.palette.data?.colors) || [];
+        const brushNames: string[] = top.brushes.data?.names || [];
+        const payload = {
+          theme: top.theme.title,
+          director: top.theme.proposedBy,
+          palette: paletteColors.slice(0,6),
+          brushes: brushNames.slice(0,4),
+          updatedAt: Date.now()
+        };
+        localStorage.setItem('weekBundle_'+currentWeek, JSON.stringify(payload));
+      } catch {/* ignore */}
+    }
+    return sets;
+  }, [proposals, currentWeek]);
 
-  const go = (sp: SubPage) => {
-  const path = sp === 'palettes' ? '#/voting/palettes' : sp === 'themes' ? '#/voting/themes' : '#/voting/brushes';
-    window.location.hash = path;
-    setSubPage(sp);
-  };
-
-  // Filter proposals by type
-  const paletteProposals = proposals.filter(p => p.type === 'palette');
-  const themeProposals = proposals.filter(p => p.type === 'theme');
-  const brushSetProposals = proposals.filter(p => p.type === 'brushKit');
-
-  // Vote on a proposal
   const vote = useCallback(async (proposalId: string) => {
     try {
-      const response = await fetch(`/api/proposals/${proposalId}/vote`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        // Update proposal locally
-        setProposals(prev => prev.map(p => 
-          p.id === proposalId 
-            ? { 
-                ...p, 
-                votes: data.votes,
-                voters: data.voted 
-                  ? [...p.voters, currentUser!].filter(Boolean)
-                  : p.voters.filter(v => v !== currentUser)
-              }
-            : p
-        ));
-        // Refresh stats
-        loadData();
+      const res = await fetch(`/api/proposals/${proposalId}/vote`, { method:'POST', headers:{'Content-Type':'application/json'} });
+      if (res.ok) {
+        const data = await res.json();
+        setProposals(prev => prev.map(p => p.id===proposalId ? { ...p, votes:data.votes, voters: data.voted ? [...p.voters, currentUser!].filter(Boolean) : p.voters.filter(v=>v!==currentUser) } : p));
       }
-    } catch (e) {
-      console.error('[PaletteVoting] error voting', e);
-    }
-  }, [currentUser, loadData]);
+    } catch(e){ console.error('[PaletteVoting] vote error', e); }
+  }, [currentUser]);
 
-  // Submit new proposal
   const submitProposal = useCallback(async (type: 'palette' | 'theme' | 'brushKit', title: string, data: any) => {
     if (submitting) return false;
     setSubmitting(true);
-    
     try {
-      const response = await fetch('/api/proposals', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type, title, data })
-      });
-      
+      const response = await fetch('/api/proposals', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type, title, data }) });
       if (response.ok) {
         const result = await response.json();
-        // Add to local state
         setProposals(prev => [result.proposal, ...prev]);
-        // Refresh data
-        await loadData();
         return true;
       }
-    } catch (e) {
-      console.error('[PaletteVoting] error submitting proposal', e);
-    } finally {
-      setSubmitting(false);
-    }
+    } catch(e){ console.error('[PaletteVoting] submit error', e); }
+    finally { setSubmitting(false); }
     return false;
-  }, [submitting, loadData]);
+  }, [submitting]);
 
-  // Form states
-  const [newPaletteName, setNewPaletteName] = useState('');
-  const [newPaletteColors, setNewPaletteColors] = useState<string[]>(['#FF6B6B','#4ECDC4','#45B7D1','#96CEB4','#FFEAA7','#DDA0DD']);
-  const [newThemeTitle, setNewThemeTitle] = useState('');
-  // (legacy) modes removed; we now propose concrete brush presets (max 4)
+  const hasUserVoted = (p: Proposal) => currentUser ? p.voters.includes(currentUser) : false;
 
-  const isHex = (s: string) => /^#([0-9a-fA-F]{6})$/.test(s);
-  const canSubmitPalette = useMemo(() => 
-    newPaletteName.trim().length > 0 && 
-    newPaletteColors.length === 6 && 
-    newPaletteColors.every(isHex), 
-    [newPaletteName, newPaletteColors]
-  );
-  const canSubmitTheme = useMemo(() => newThemeTitle.trim().length >= 3, [newThemeTitle]);
-  // no modes page/state
+  // Wizard state
+  const [wizTheme, setWizTheme] = useState('');
+  const [wizPaletteName, setWizPaletteName] = useState('');
+  const [wizPaletteColors, setWizPaletteColors] = useState<string[]>(['#FF6B6B','#4ECDC4','#45B7D1','#96CEB4','#FFEAA7','#DDA0DD']);
+  const [wizBrushIds, setWizBrushIds] = useState<string[]>([]);
+  const [wizardStep, setWizardStep] = useState<1|2|3>(1);
+  const wizValidTheme = wizTheme.trim().length >= 3;
+  const wizValidPalette = wizPaletteName.trim().length>0 && wizPaletteColors.length===6 && wizPaletteColors.every(c=>/^#[0-9A-Fa-f]{6}$/.test(c));
+  const wizValidBrushes = wizBrushIds.length>0 && wizBrushIds.length<=4;
+  const wizardComplete = wizValidTheme && wizValidPalette && wizValidBrushes;
+  const toggleWizBrush = (id:string)=> setWizBrushIds(prev => prev.includes(id) ? prev.filter(x=>x!==id) : (prev.length<4 ? [...prev,id] : prev));
+  const resetWizard = ()=>{ setWizTheme(''); setWizPaletteName(''); setWizPaletteColors(['#FF6B6B','#4ECDC4','#45B7D1','#96CEB4','#FFEAA7','#DDA0DD']); setWizBrushIds([]); setWizardStep(1); };
 
-  // Submit handlers
-  const handleSubmitPalette = async () => {
-    if (!canSubmitPalette) return;
-    // normalize palette data to { colors: string[] }
-    const success = await submitProposal('palette', newPaletteName.trim(), { colors: newPaletteColors });
-    if (success) {
-      setNewPaletteName('');
-      setNewPaletteColors(['#FF6B6B','#4ECDC4','#45B7D1','#96CEB4','#FFEAA7','#DDA0DD']);
-    }
-  };
+  const submitCombined = useCallback(async ()=>{
+    if (!currentUser || submitting || !wizardComplete) return;
+    setSubmitting(true);
+    const groupId = 'grp_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8);
+    try {
+      const themeOk = await submitProposal('theme', wizTheme.trim(), { description: wizTheme.trim(), groupId });
+      const paletteOk = await submitProposal('palette', wizPaletteName.trim(), { colors: wizPaletteColors, groupId });
+      const brushNames = allBrushPresets.filter(b=>wizBrushIds.includes(b.id)).map(b=>b.name);
+      const brushOk = await submitProposal('brushKit', brushNames.join(' + '), { ids:wizBrushIds, names:brushNames, groupId });
+      if (themeOk && paletteOk && brushOk) { resetWizard(); }
+    } finally { setSubmitting(false); }
+  }, [currentUser, submitting, wizardComplete, wizTheme, wizPaletteName, wizPaletteColors, wizBrushIds, submitProposal]);
 
-  const handleSubmitTheme = async () => {
-    if (!canSubmitTheme) return;
-    const success = await submitProposal('theme', newThemeTitle.trim(), { description: newThemeTitle.trim() });
-    if (success) {
-      setNewThemeTitle('');
-    }
-  };
+  const voteCombined = useCallback(async (setObj: CombinedSet)=>{
+    if (!currentUser) return;
+    const alreadyTheme = hasUserVoted(setObj.theme);
+    const alreadyPalette = hasUserVoted(setObj.palette);
+    const alreadyBrush = hasUserVoted(setObj.brushes);
+    if (alreadyTheme && alreadyPalette && alreadyBrush) return;
+    if (!alreadyTheme) await vote(setObj.theme.id);
+    if (!alreadyPalette) await vote(setObj.palette.id);
+    if (!alreadyBrush) await vote(setObj.brushes.id);
+  }, [currentUser, vote]);
 
-  // Brush proposals (choose up to 4 existing brushes)
-  const [selectedBrushIds, setSelectedBrushIds] = useState<string[]>([]);
-  const canSubmitBrushes = useMemo(() => selectedBrushIds.length > 0 && selectedBrushIds.length <= 4, [selectedBrushIds]);
-  const handleToggleBrush = (id: string) => {
-    setSelectedBrushIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : (prev.length < 4 ? [...prev, id] : prev));
-  };
-  const handleSubmitBrushes = async () => {
-    if (!canSubmitBrushes) return;
-    const names = allBrushPresets.filter(b => selectedBrushIds.includes(b.id)).map(b => b.name);
-    const title = names.join(' + ');
-  const ok = await submitProposal('brushKit', title, { ids: selectedBrushIds, names });
-    if (ok) setSelectedBrushIds([]);
-  };
-
-  // no mode badge
-
-  // Check if user has voted
-  const hasUserVoted = (proposal: Proposal) => {
-    return currentUser ? proposal.voters.includes(currentUser) : false;
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <RefreshCw className="w-8 h-8 text-white animate-spin" />
-      </div>
-    );
+  if (loading && proposals.length===0) {
+    return <div className="flex items-center justify-center h-64"><div className="text-black/40 text-sm">Loading…</div></div>;
   }
 
   return (
-    <div className="space-y-8">
-      <div className="text-center">
-        <h2 className="text-4xl font-bold text-white mb-2">Weekly Voting</h2>
-        <p className="text-white/70 text-sm md:text-base">Vote on the 6-color palette, allowed brushes, and the theme.</p>
-        {currentUser && (
-          <p className="text-white/60 text-sm mt-1">Logged in as <span className="font-semibold text-white/80">u/{currentUser}</span></p>
-        )}
+    <div className="paper-shell pencil-theme px-4 py-6 mx-auto max-w-6xl">
+      <div className="sketch-border rounded-xl p-6 mb-8 bg-[#FAF3E0] shadow-[4px_4px_0_0_#000]">
+        <h2 className="text-4xl font-extrabold mb-2 tracking-wide text-black">Weekly Voting</h2>
+        <p className="text-black/70 text-sm md:text-base leading-relaxed">Propose and vote a weekly bundle: <strong>Theme</strong> + <strong>Palette (6)</strong> + <strong>Brushes (up to 4)</strong>. A single vote adds 1 to all three underlying proposals.</p>
+        {currentUser && <p className="mt-2 text-black/70 text-sm">Logged in as <span className="font-semibold text-black">u/{currentUser}</span></p>}
       </div>
-
-      {/* Subpage tabs */}
-      <div className="flex items-center justify-center gap-2 md:gap-3">
-        {([
-          {key:'palettes', label:'Palettes', count: paletteProposals.length},
-          {key:'themes', label:'Themes', count: themeProposals.length},
-          {key:'brushes', label:'Brushes', count: brushSetProposals.length}
-        ] as Array<{key: SubPage; label: string; count: number}>).map(t => (
-          <button
-            key={t.key}
-            onClick={() => go(t.key)}
-            className={`px-3 py-1.5 rounded-full text-sm border transition flex items-center gap-2 ${subPage===t.key? 'bg-white/30 text-white border-white/60':'bg-white/10 text-white/80 border-white/20 hover:bg-white/20'}`}
-          >
-            {t.label}
-            {t.count > 0 && (
-              <span className="bg-white/20 px-1.5 py-0.5 rounded-full text-xs font-semibold">{t.count}</span>
-            )}
-          </button>
-        ))}
-      </div>
-
-      {/* Palettes page */}
-      {subPage === 'palettes' && (
-        <>
-          <section className="bg-white/10 backdrop-blur-sm rounded-2xl p-5 md:p-6 border border-white/20">
-            <h3 className="text-xl font-bold text-white mb-4">Propose palette (6 colors)</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="md:col-span-1 flex flex-col gap-2">
-                <label className="text-white/80 text-sm">Name</label>
-                <input 
-                  value={newPaletteName} 
-                  onChange={e => setNewPaletteName(e.target.value)} 
-                  placeholder="Palette name" 
-                  className="px-3 py-2 rounded-md bg-white/10 border border-white/20 text-white placeholder-white/40" 
-                />
+      <div className="space-y-10">
+        <section className="sketch-border rounded-2xl p-6 bg-[#FFF9EE] shadow-[4px_4px_0_0_#000]">
+          <h3 className="text-2xl font-bold text-black mb-4">Create weekly bundle</h3>
+          <div className="flex flex-col gap-6">
+            <div className="flex items-center gap-2 text-xs">
+              {[1,2,3].map(s => <div key={s} className={`sketch-border px-3 py-1 rounded-md font-semibold ${wizardStep===s ? 'bg-yellow-200':'bg-white'}`}>Step {s}</div>)}
+            </div>
+            {wizardStep===1 && (
+              <div className="space-y-3">
+                <label className="text-black/80 text-sm font-semibold">Weekly theme</label>
+                <input value={wizTheme} onChange={e=>setWizTheme(e.target.value)} placeholder="e.g. Retro Future" className="w-full px-3 py-2 rounded-md sketch-border bg-white text-black placeholder-black/40" />
+                <div className="flex justify-end">
+                  <button disabled={!wizValidTheme} onClick={()=>setWizardStep(2)} className={`sketch-border px-5 py-2 rounded-lg font-bold ${wizValidTheme? 'bg-emerald-300 hover:bg-emerald-400 cursor-pointer':'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>Next</button>
+                </div>
               </div>
-              <div className="md:col-span-2 flex items-center gap-2">
-                {newPaletteColors.map((c, i) => (
-                  <div key={i} className="flex flex-col items-center gap-1">
-                    <input 
-                      type="color" 
-                      value={c} 
-                      onChange={e => {
-                        const arr=[...newPaletteColors]; 
-                        arr[i]=e.target.value.toUpperCase(); 
-                        setNewPaletteColors(arr);
-                      }} 
-                      className="w-10 h-10 rounded-md border border-white/30 cursor-pointer" 
-                    />
-                    <input 
-                      value={c} 
-                      onChange={e => {
-                        const v=e.target.value.toUpperCase(); 
-                        const arr=[...newPaletteColors]; 
-                        arr[i]=v; 
-                        setNewPaletteColors(arr);
-                      }} 
-                      className="w-20 text-xs px-2 py-1 rounded bg-white/10 border border-white/20 text-white placeholder-white/40" 
-                    />
+            )}
+            {wizardStep===2 && (
+              <div className="space-y-4">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  <h4 className="text-black font-semibold">Palette (6 colors)</h4>
+                  <input value={wizPaletteName} onChange={e=>setWizPaletteName(e.target.value)} placeholder="Palette name" className="px-3 py-2 rounded sketch-border bg-white text-black placeholder-black/40 text-sm" />
+                </div>
+                <div className="flex flex-wrap gap-4">
+                  {wizPaletteColors.map((c,i)=>(
+                    <div key={i} className="flex flex-col items-center gap-1">
+                      <input type="color" value={c} onChange={e=>{ const arr=[...wizPaletteColors]; arr[i]=e.target.value.toUpperCase(); setWizPaletteColors(arr); }} className="w-12 h-12 rounded-md sketch-border cursor-pointer" />
+                      <input value={c} onChange={e=>{ const v=e.target.value.toUpperCase(); const arr=[...wizPaletteColors]; arr[i]=v; setWizPaletteColors(arr); }} className="w-20 text-xs px-2 py-1 rounded sketch-border bg-white text-black" />
+                    </div>
+                  ))}
+                </div>
+                <div className="flex justify-between items-center">
+                  <button onClick={()=>setWizardStep(1)} className="sketch-border px-4 py-2 rounded-md bg-white text-black hover:bg-yellow-100 text-sm font-semibold">Back</button>
+                  <div className="flex gap-2">
+                    <button onClick={()=>setWizPaletteColors(['#FF6B6B','#4ECDC4','#45B7D1','#96CEB4','#FFEAA7','#DDA0DD'])} className="sketch-border px-4 py-2 rounded-md bg-white text-black hover:bg-yellow-100 text-xs">Reset</button>
+                    <button disabled={!wizValidPalette} onClick={()=>setWizardStep(3)} className={`sketch-border px-5 py-2 rounded-lg font-bold ${wizValidPalette? 'bg-emerald-300 hover:bg-emerald-400':'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>Next</button>
                   </div>
-                ))}
-              </div>
-            </div>
-            <div className="mt-4">
-              <button 
-                disabled={!canSubmitPalette || submitting} 
-                onClick={handleSubmitPalette} 
-                className={`px-4 py-2 rounded-lg font-semibold ${canSubmitPalette && !submitting ? 'bg-emerald-500 hover:bg-emerald-600 text-white':'bg-white/10 text-white/50 cursor-not-allowed'}`}
-              >
-                {submitting ? 'Submitting...' : 'Submit'}
-              </button>
-            </div>
-          </section>
-          
-          <section>
-            <h3 className="text-xl font-bold text-white mb-3">Proposed palettes</h3>
-            {paletteProposals.length === 0 ? (
-              <div className="text-center py-8 text-white/60">
-                <p>No palette proposals yet. Be the first to propose one!</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 md:gap-8">
-                {paletteProposals.map(palette => {
-                  const voted = hasUserVoted(palette);
-                  return (
-                    <div key={palette.id} className="bg-white/10 backdrop-blur-sm rounded-2xl p-6 border border-white/20 hover:bg-white/15 transition-all duration-300">
-                      <div className="flex justify-between items-start mb-4">
-                        <div>
-                          <h4 className="text-lg font-bold text-white mb-1">{palette.title}</h4>
-                          <div className="flex items-center space-x-2 text-white/70 text-sm">
-                            <Users className="w-3 h-3" />
-                            <span>by u/{palette.proposedBy}</span>
-                          </div>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <TrendingUp className="w-4 h-4 text-green-400" />
-                          <span className="text-white font-semibold">{palette.votes}</span>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-6 gap-2 mb-4">
-                        {(Array.isArray(palette.data) ? palette.data : (palette.data?.colors || [])).map((color: string, i: number) => (
-                          <div key={i} className="aspect-square rounded-lg border border-white/20" style={{backgroundColor: color}} title={color} />
-                        ))}
-                      </div>
-                      <button 
-                        onClick={() => vote(palette.id)} 
-                        disabled={!currentUser}
-                        className={`w-full flex items-center justify-center gap-2 py-3 px-4 rounded-lg transition-all ${voted ? 'bg-green-500 hover:bg-green-600 text-white':'bg-white/10 hover:bg-white/20 text-white border border-white/20'} ${!currentUser ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      >
-                        <Vote className="w-4 h-4" />
-                        <span className="font-semibold">{voted ? 'Voted!' : 'Vote for this palette'}</span>
-                      </button>
-                    </div>
-                  );
-                })}
+                </div>
               </div>
             )}
-          </section>
-        </>
-      )}
-
-      {/* Themes page */}
-      {subPage === 'themes' && (
-        <>
-          <section className="bg-white/10 backdrop-blur-sm rounded-2xl p-5 md:p-6 border border-white/20">
-            <h3 className="text-xl font-bold text-white mb-4">Propose theme</h3>
-            <div className="flex gap-2">
-              <input 
-                value={newThemeTitle} 
-                onChange={e => setNewThemeTitle(e.target.value)} 
-                placeholder="e.g., Retro Future" 
-                className="flex-1 px-3 py-2 rounded-md bg-white/10 border border-white/20 text-white placeholder-white/40" 
-              />
-              <button 
-                disabled={!canSubmitTheme || submitting} 
-                onClick={handleSubmitTheme} 
-                className={`px-4 py-2 rounded-lg font-semibold ${canSubmitTheme && !submitting ? 'bg-emerald-500 hover:bg-emerald-600 text-white':'bg-white/10 text-white/50 cursor-not-allowed'}`}
-              >
-                {submitting ? 'Submitting...' : 'Submit'}
-              </button>
-            </div>
-          </section>
-          
-          <section>
-            <h3 className="text-xl font-bold text-white mb-3">Proposed themes</h3>
-            {themeProposals.length === 0 ? (
-              <div className="text-center py-8 text-white/60">
-                <p>No theme proposals yet. Be the first to propose one!</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 md:gap-8">
-                {themeProposals.map(theme => {
-                  const voted = hasUserVoted(theme);
-                  return (
-                    <div key={theme.id} className="bg-white/10 backdrop-blur-sm rounded-2xl p-6 border border-white/20 hover:bg-white/15 transition-all duration-300">
-                      <div className="flex justify-between items-start mb-4">
-                        <div>
-                          <h4 className="text-lg font-bold text-white mb-1">{theme.title}</h4>
-                          <div className="flex items-center space-x-2 text-white/70 text-sm">
-                            <Users className="w-3 h-3" />
-                            <span>by u/{theme.proposedBy}</span>
-                          </div>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <TrendingUp className="w-4 h-4 text-green-400" />
-                          <span className="text-white font-semibold">{theme.votes}</span>
-                        </div>
-                      </div>
-                      <button 
-                        onClick={() => vote(theme.id)} 
-                        disabled={!currentUser}
-                        className={`w-full flex items-center justify-center gap-2 py-3 px-4 rounded-lg transition-all ${voted ? 'bg-green-500 hover:bg-green-600 text-white':'bg-white/10 hover:bg-white/20 text-white border border-white/20'} ${!currentUser ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      >
-                        <Vote className="w-4 h-4" />
-                        <span className="font-semibold">{voted ? 'Voted!' : 'Vote for this theme'}</span>
-                      </button>
-                    </div>
-                  );
-                })}
+            {wizardStep===3 && (
+              <div className="space-y-5">
+                <h4 className="text-black font-semibold">Select brushes (max 4)</h4>
+                <div className="flex flex-wrap gap-2">
+                  {allBrushPresets.map(b=>{
+                    const checked = wizBrushIds.includes(b.id);
+                    const disabled = !checked && wizBrushIds.length>=4;
+                    return (
+                      <label key={b.id} className={`sketch-border flex items-center gap-2 px-2 py-1 rounded-lg text-xs font-semibold ${checked? 'bg-yellow-200':'bg-white hover:bg-yellow-100'} ${disabled? 'opacity-40 cursor-not-allowed':''}`}>
+                        <input type="checkbox" className="accent-black" checked={checked} disabled={disabled} onChange={()=>toggleWizBrush(b.id)} />
+                        <span>{b.name}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <div className="flex justify-between items-center">
+                  <button onClick={()=>setWizardStep(2)} className="sketch-border px-4 py-2 rounded-md bg-white text-black hover:bg-yellow-100 text-sm font-semibold">Back</button>
+                  <div className="flex gap-2">
+                    <button onClick={resetWizard} className="sketch-border px-4 py-2 rounded-md bg-white text-black hover:bg-yellow-100 text-xs">Reset</button>
+                    <button disabled={!wizardComplete || submitting || !currentUser} onClick={submitCombined} className={`sketch-border px-5 py-2 rounded-lg font-bold ${wizardComplete && !submitting && currentUser? 'bg-emerald-300 hover:bg-emerald-400':'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>{submitting? 'Creating...' : 'Publish bundle'}</button>
+                  </div>
+                </div>
+                {!currentUser && <div className="sketch-border p-3 rounded-md bg-yellow-100 text-black text-xs font-semibold">You must log in to publish a bundle.</div>}
               </div>
             )}
-          </section>
-        </>
-      )}
-
-      {/* Brushes page */}
-      {subPage === 'brushes' && (
-        <>
-          <section className="bg-white/10 backdrop-blur-sm rounded-2xl p-5 md:p-6 border border-white/20">
-            <h3 className="text-xl font-bold text-white mb-4">Propose brushes (max 4)</h3>
-            <div className="flex flex-wrap gap-2 mb-3">
-              {allBrushPresets.map(b => {
-                const checked = selectedBrushIds.includes(b.id);
-                const disabledChoice = !checked && selectedBrushIds.length >= 4;
+          </div>
+        </section>
+        <section>
+          <h3 className="text-2xl font-bold text-black mb-4">Proposed bundles</h3>
+          {combinedSets.length===0 ? (
+            <div className="text-center py-10 text-black/60 text-sm sketch-border rounded-xl bg-white">No complete bundles yet.</div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
+              {combinedSets.map(setObj=>{
+                const totalVotes = setObj.theme.votes; // using theme vote as representative
+                const alreadyAll = hasUserVoted(setObj.theme) && hasUserVoted(setObj.palette) && hasUserVoted(setObj.brushes);
+                const paletteColors: string[] = (Array.isArray(setObj.palette.data)? setObj.palette.data : setObj.palette.data?.colors) || [];
+                const brushNames: string[] = (setObj.brushes.data?.names || []);
                 return (
-                  <label key={b.id} className={`flex items-center gap-2 px-2 py-1 rounded-lg border ${checked ? 'bg-white/20 border-white/50 text-white' : disabledChoice ? 'bg-white/5 border-white/10 text-white/30' : 'bg-white/10 border-white/20 text-white/70 hover:bg-white/15'}`}>
-                    <input type="checkbox" className="accent-white" checked={checked} onChange={() => handleToggleBrush(b.id)} disabled={disabledChoice} />
-                    <span className="text-xs">{b.name}</span>
-                  </label>
+                  <div key={setObj.groupId} className="sketch-border rounded-2xl p-5 bg-white shadow-[4px_4px_0_0_#000] flex flex-col gap-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <h4 className="text-lg font-bold text-black mb-1">{setObj.theme.title}</h4>
+                        <div className="text-[11px] font-semibold text-black/70 mb-1">Director: <span className="text-black">u/{setObj.theme.proposedBy}</span></div>
+                        <div className="flex items-center gap-2 flex-wrap mb-2">
+                          {paletteColors.slice(0,6).map((c,i)=>(<span key={i} className="w-5 h-5 rounded-sm sketch-border-inner" style={{background:c}} />))}
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {brushNames.map((n,i)=>(<span key={i} className="px-2 py-0.5 rounded-full bg-[#FAF3E0] sketch-border text-[11px] font-semibold text-black/80">{n}</span>))}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 font-bold text-black"><span className="text-sm">Votes:</span><span className="text-xl">{totalVotes}</span></div>
+                    </div>
+                    <button onClick={()=>voteCombined(setObj)} disabled={!currentUser || alreadyAll} className={`sketch-border w-full flex items-center justify-center gap-2 py-3 px-4 rounded-lg font-bold transition-all ${alreadyAll? 'bg-emerald-300 cursor-default':'bg-yellow-200 hover:bg-yellow-300'} ${!currentUser? 'opacity-50 cursor-not-allowed':''}`}>
+                      <span>{alreadyAll? 'Voted!' : 'Vote bundle (x3)'}</span>
+                    </button>
+                  </div>
                 );
               })}
             </div>
-            <button 
-              disabled={!canSubmitBrushes || submitting} 
-              onClick={handleSubmitBrushes} 
-              className={`px-4 py-2 rounded-lg font-semibold ${canSubmitBrushes && !submitting ? 'bg-emerald-500 hover:bg-emerald-600 text-white':'bg-white/10 text-white/50 cursor-not-allowed'}`}
-            >
-              {submitting ? 'Submitting...' : 'Submit'}
-            </button>
-          </section>
-          <section>
-            <h3 className="text-xl font-bold text-white mb-3">Proposed brush sets</h3>
-            {brushSetProposals.length === 0 ? (
-              <div className="text-center py-8 text-white/60">
-                <p>No brush proposals yet. Be the first to propose a set!</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 md:gap-8">
-                {brushSetProposals.map(setp => {
-                  const voted = hasUserVoted(setp);
-                  const ids: string[] = Array.isArray(setp.data) ? setp.data : (setp.data?.ids || []);
-                  const names: string[] = (setp.data?.names || ids.map(id => allBrushPresets.find(b=>b.id===id)?.name || id));
-                  return (
-                    <div key={setp.id} className="bg-white/10 backdrop-blur-sm rounded-2xl p-6 border border-white/20 hover:bg-white/15 transition-all duration-300">
-                      <div className="flex justify-between items-start mb-3">
-                        <div>
-                          <h4 className="text-lg font-bold text-white mb-1">{setp.title}</h4>
-                          <div className="flex items-center space-x-2 text-white/70 text-sm"><Users className="w-3 h-3" /><span>by u/{setp.proposedBy}</span></div>
-                        </div>
-                        <div className="flex items-center space-x-2"><TrendingUp className="w-4 h-4 text-green-400" /><span className="text-white font-semibold">{setp.votes}</span></div>
-                      </div>
-                      <div className="flex flex-wrap gap-1.5 mb-4">
-                        {names.map((n, i)=> (
-                          <span key={i} className="px-2 py-0.5 rounded-full bg-white/10 border border-white/20 text-white/80 text-[10px]">{n}</span>
-                        ))}
-                      </div>
-                      <button 
-                        onClick={() => vote(setp.id)} 
-                        disabled={!currentUser}
-                        className={`w-full flex items-center justify-center gap-2 py-3 px-4 rounded-lg transition-all ${voted ? 'bg-green-500 hover:bg-green-600 text-white':'bg-white/10 hover:bg-white/20 text-white border border-white/20'} ${!currentUser ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      >
-                        <Vote className="w-4 h-4" />
-                        <span className="font-semibold">{voted ? 'Voted!' : 'Vote for this set'}</span>
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </section>
-        </>
-      )}
-
-      {/* Voting Stats */}
-      <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-6 border border-white/20">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-xl font-bold text-white">Voting Statistics</h3>
-          <button 
-            onClick={loadData}
-            className="flex items-center gap-2 px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-all"
-          >
-            <RefreshCw className="w-4 h-4" />
-            Refresh
-          </button>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <div className="text-center">
-            <div className="text-3xl font-bold text-blue-400">{votingStats.totalProposals}</div>
-            <div className="text-white/70">Total Proposals</div>
-          </div>
-          <div className="text-center">
-            <div className="text-3xl font-bold text-green-400">{votingStats.totalVotes}</div>
-            <div className="text-white/70">Total Votes Cast</div>
-          </div>
-          <div className="text-center">
-            <div className="text-3xl font-bold text-purple-400">{votingStats.activeVoters}</div>
-            <div className="text-white/70">Active Voters</div>
-          </div>
-          <div className="text-center">
-            <div className="text-3xl font-bold text-orange-400 flex items-center justify-center gap-2">
-              <Clock className="w-6 h-6" />
-              Live
-            </div>
-            <div className="text-white/70">Real-time Updates</div>
-          </div>
-        </div>
-      </div>
-
-      {/* Community Message */}
-      <div className="bg-gradient-to-r from-purple-500/20 to-pink-500/20 backdrop-blur-sm rounded-2xl p-6 border border-white/20">
-        <h3 className="text-xl font-bold text-white mb-2">Community Guidelines</h3>
-        <p className="text-white/80">
-          Vote for palettes that inspire creativity and work well together. Consider color harmony, 
-          accessibility, and how the palette will look across different artistic styles. Your vote 
-          helps shape the creative direction of our collaborative masterpiece!
-        </p>
-        {!currentUser && (
-          <div className="mt-4 p-3 bg-yellow-500/20 border border-yellow-500/30 rounded-lg">
-            <p className="text-yellow-200 text-sm">
-              ⚠️ You need to be logged in to Reddit to vote and submit proposals.
-            </p>
-          </div>
-        )}
+          )}
+        </section>
       </div>
     </div>
   );

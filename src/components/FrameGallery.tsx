@@ -16,6 +16,10 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
   const [votes, setVotes] = useState<Record<string, { up: number; down: number; my: -1|0|1 }>>({});
   const [isMod, setIsMod] = useState(false);
   const [modFrames, setModFrames] = useState<any[]>([]);
+  const [weekDirectors, setWeekDirectors] = useState<Record<number,string>>({});
+  const [fetchingDirectors, setFetchingDirectors] = useState(false);
+  // Store resolved winning bundle data (theme + palette + brush names) per week
+  const [weekBundles, setWeekBundles] = useState<Record<number,{ theme:string; palette:string[]; brushes:string[]; director?:string }>>({});
   const toggleWeek = useCallback((week:number)=>{ setOpenWeeks(o=>({...o,[week]:!o[week]})); },[]);
   const formatDate = (timestamp: number) => new Date(timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
@@ -122,13 +126,116 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
   // Group frames by paletteWeek
   const grouped = useMemo(()=>{
     const map = new Map<number, Frame[]>();
-    for(const f of frames){
+    for (const f of frames) {
       const arr = map.get(f.paletteWeek) || [];
       arr.push(f);
       map.set(f.paletteWeek, arr);
     }
     return Array.from(map.entries()).sort((a,b)=>a[0]-b[0]);
-  },[frames]);
+  }, [frames]);
+
+  // Extract distinct week numbers
+  const weekNumbers = useMemo(()=> Array.from(new Set(frames.map(f=>f.paletteWeek))).sort((a,b)=>a-b), [frames]);
+
+  useEffect(()=>{
+    let cancel = false;
+    (async ()=>{
+      if (!weekNumbers.length) return;
+      setFetchingDirectors(true);
+      // Seed from localStorage for instant paint
+      const seededDirectors: Record<number,string> = {};
+      const seededBundles: Record<number,{ theme:string; palette:string[]; brushes:string[]; director?:string }> = {};
+      for (const w of weekNumbers) {
+        try {
+          const wd = localStorage.getItem('weekWinner_'+w);
+          if (wd) seededDirectors[w] = wd;
+          const wb = localStorage.getItem('weekBundle_'+w);
+          if (wb) {
+            const parsed = JSON.parse(wb);
+            if (parsed && parsed.theme) {
+              seededBundles[w] = {
+                theme: parsed.theme,
+                palette: Array.isArray(parsed.palette)? parsed.palette.slice(0,6):[],
+                brushes: Array.isArray(parsed.brushes)? parsed.brushes.slice(0,4):[],
+                director: parsed.director
+              };
+              if (!seededDirectors[w] && parsed.director) seededDirectors[w] = parsed.director;
+            }
+          }
+        } catch {/* ignore */}
+      }
+      if (Object.keys(seededDirectors).length) setWeekDirectors(prev=>({ ...seededDirectors, ...prev }));
+      if (Object.keys(seededBundles).length) setWeekBundles(prev=>({ ...seededBundles, ...prev }));
+      try {
+        const results = await Promise.all(weekNumbers.map(async w => {
+          try {
+            const r = await fetch(`/api/proposals?week=${w}`);
+            if (!r.ok) return { week: w, proposals: [] as any[] };
+            const j = await r.json();
+            return { week: w, proposals: j.proposals || [] };
+          } catch { return { week: w, proposals: [] as any[] }; }
+        }));
+        const directorUpdates: Record<number,string> = {};
+        const bundleUpdates: Record<number,{ theme:string; palette:string[]; brushes:string[]; director?:string }> = {};
+        for (const { week, proposals } of results) {
+          if (!proposals.length) continue;
+          interface P { id:string; type:string; title:string; data:any; votes:number; proposedBy:string; }
+          const byGroup: Record<string, { theme?:P; palette?:P; brushes?:P; total:number }> = {};
+          const themes: P[] = [];
+          for (const p of proposals as P[]) {
+            const gid = p.data?.groupId;
+            if (gid) {
+              if (!byGroup[gid]) byGroup[gid] = { total:0 };
+              if (p.type === 'theme') byGroup[gid].theme = p;
+              else if (p.type === 'palette') byGroup[gid].palette = p;
+              else if (p.type === 'brushKit') byGroup[gid].brushes = p;
+            }
+            if (p.type === 'theme') themes.push(p);
+          }
+          let winner: string | undefined;
+          let best = -1;
+            let bestGroup: { theme?:P; palette?:P; brushes?:P; total:number } | undefined;
+          for (const g of Object.values(byGroup)) {
+            if (g.theme && g.palette && g.brushes) {
+              const total = (g.theme.votes||0)+(g.palette.votes||0)+(g.brushes.votes||0);
+              if (total > best) { best = total; bestGroup = g; winner = g.theme.proposedBy || g.palette.proposedBy || g.brushes.proposedBy; }
+            }
+          }
+          if (!winner && themes.length) {
+            themes.sort((a,b)=> (b.votes||0) - (a.votes||0));
+            winner = themes[0].proposedBy;
+          }
+          if (winner) {
+            directorUpdates[week] = winner;
+            try { localStorage.setItem('weekWinner_'+week, winner); } catch {}
+          }
+          if (bestGroup && bestGroup.theme && bestGroup.palette && bestGroup.brushes) {
+            const paletteColors: string[] = (Array.isArray(bestGroup.palette.data)? bestGroup.palette.data : bestGroup.palette.data?.colors) || [];
+            const brushNames: string[] = bestGroup.brushes.data?.names || [];
+            const bundlePayload = {
+              theme: bestGroup.theme.title,
+              director: winner,
+              palette: paletteColors.slice(0,6),
+              brushes: brushNames.slice(0,4),
+              updatedAt: Date.now()
+            };
+            bundleUpdates[week] = {
+              theme: bundlePayload.theme,
+              palette: bundlePayload.palette,
+              brushes: bundlePayload.brushes,
+              director: winner
+            };
+            try { localStorage.setItem('weekBundle_'+week, JSON.stringify(bundlePayload)); } catch {}
+          }
+        }
+        if (!cancel) {
+          if (Object.keys(directorUpdates).length) setWeekDirectors(prev=>({ ...prev, ...directorUpdates }));
+          if (Object.keys(bundleUpdates).length) setWeekBundles(prev=>({ ...prev, ...bundleUpdates }));
+        }
+      } finally { if (!cancel) setFetchingDirectors(false); }
+    })();
+    return ()=>{ cancel = true; };
+  }, [weekNumbers]);
 
   return (
       <div className="space-y-10">
@@ -206,99 +313,105 @@ export const FrameGallery: React.FC<FrameGalleryProps> = ({ frames, pendingFrame
   {/* Week meta helpers (palette/theme/brushes). Keep in sync with App weekly palettes. */}
   {grouped.map(([week, list])=>{
           const sorted = [...list].sort((a,b)=>a.timestamp-b.timestamp);
-          const weeklyPalettes: string[][] = [
+          // Fallback arrays if no dynamic bundle is available yet
+          const fallbackPalettes: string[][] = [
             ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD'],
             ['#E17055', '#FDCB6E', '#6C5CE7', '#A29BFE', '#FD79A8', '#E84393'],
             ['#00CEC9', '#55A3FF', '#FDCB6E', '#E17055', '#A29BFE', '#FD79A8']
           ];
-          const themes = ['Anime Inking', 'Retro Comic', 'Soft Watercolor'];
-          const palette = weeklyPalettes[week % weeklyPalettes.length] || weeklyPalettes[0];
-          const theme = themes[week % themes.length] || themes[0];
-          // Map active brush ids to display names; fallback to Week 1 defaults when none
+          const fallbackThemes = ['Anime Inking', 'Retro Comic', 'Soft Watercolor'];
+          const bundle = weekBundles[week];
+          const palette = bundle?.palette && bundle.palette.length>=3 ? bundle.palette : (fallbackPalettes[week % fallbackPalettes.length] || fallbackPalettes[0]);
+          const theme = bundle?.theme || (fallbackThemes[week % fallbackThemes.length] || fallbackThemes[0]);
+          // Map active brush ids to display names (for fallback). When bundle has brush names, prefer them.
           const activeIds = (activeBrushIds && activeBrushIds.length ? activeBrushIds : ['ink','acrilico','marker','charcoal']).slice(0,4);
           const activeBrushNames = activeIds
             .map(id => allBrushPresets.find(p => p.id === id)?.name || id)
             .join(', ');
+          const director = weekDirectors[week];
+          const brushLine = bundle?.brushes && bundle.brushes.length ? bundle.brushes.join(', ') : activeBrushNames;
           return (
-            <div key={week} className="space-y-1 max-w-[1580px] mx-auto px-2">
-              <button
-                type="button"
-                onClick={()=>toggleWeek(week)}
-                className="w-full group flex items-center justify-between rounded-lg px-3 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-left transition-colors"
-              >
-                <div className="flex items-center space-x-3">
-                  <div className={`w-5 h-5 rounded-sm flex items-center justify-center text-[10px] font-bold tracking-wide ${openWeeks[week] ? 'bg-green-500/70 text-black':'bg-white/15 text-white/70'} transition-colors`}>
-                    {openWeeks[week] ? '-' : '+'}
+            <div key={week} className="max-w-[1580px] mx-auto px-2">
+              <div className="clapper">
+                <div className="clapper-header">
+                  <div className="clapper-stripes">
+                    {palette.slice(0,6).map((c,i)=> <div key={i} className="clapper-stripe-tile" style={{ background: c }} />)}
                   </div>
-                  <h3 className="text-white/90 font-semibold text-sm tracking-wide uppercase">Week {week}</h3>
-                  <div className="hidden sm:flex items-center gap-2 ml-2">
-                    <div className="flex items-center gap-1">
-                      {palette.slice(0,6).map((c, i)=> (
-                        <span key={i} className="w-3 h-3 rounded-sm border border-white/30" style={{ backgroundColor: c }} />
-                      ))}
+                  <div className="clapper-meta-row" style={{rowGap:4}}>
+                    <button onClick={()=>toggleWeek(week)} className="clapper-toggle-btn" aria-label="Toggle Week">
+                      {openWeeks[week] ? '−' : '+'}
+                    </button>
+                    <div style={{display:'flex',flexDirection:'column',minWidth:160}}>
+                      <span className="clapper-title">Week {week} Theme: {theme}</span>
                     </div>
-                    <span className="text-white/60 text-[10px]">Theme: {theme} • Brushes: {activeBrushNames}</span>
+                    <div className="clapper-info-line" style={{minWidth:70}}>
+                      <span className="clapper-label">Frames</span>
+                      <span className="clapper-sub">{sorted.length}</span>
+                    </div>
+                    <div className="clapper-info-line" style={{flex:1,minWidth:140}}>
+                      <span className="clapper-label">Brushes</span>
+                      <span className="clapper-sub" style={{whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{brushLine}</span>
+                    </div>
+                    <div className="clapper-info-line" style={{minWidth:140}}>
+                      <span className="clapper-label">Director</span>
+                      <span className="clapper-director">{director ? 'u/'+director : (fetchingDirectors ? 'loading…' : 'unknown')}</span>
+                    </div>
                   </div>
                 </div>
-                <span className="text-white/40 text-[10px]">{sorted.length} frames</span>
-              </button>
-              {openWeeks[week] && (
-                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-6 gap-3 pt-1">
-                  {[...sorted].reverse().map((frame)=>{
-                    const index = frames.indexOf(frame); // global index
-                    const key = (frame as any).key || frame.id;
-                    return (
-                      <div
-                        key={key}
-                        className="bg-white/10 backdrop-blur-sm rounded-xl overflow-hidden border border-white/10 hover:bg-white/20 transition-colors duration-200"
-                      >
-                        <div className="relative aspect-[480/640] bg-black/40 flex items-center justify-center">
-                          { (frame.imageData || hydrated[key]) ? (
-                            <img
-                              src={frame.imageData || hydrated[key]}
-                              alt={`Frame ${index+1}`}
-                              className="w-full h-full object-contain"
-                              loading="lazy"
-                              onError={()=>{ if(!hydrated[key]) hydrateFrame(frame); }}
-                            />
-                          ) : (
-                            <button
-                              onClick={()=>hydrateFrame(frame)}
-                              className="text-white/60 text-[10px] px-2 py-1 rounded bg-white/10 hover:bg-white/20"
-                              title="Load image"
-                            >Load</button>
-                          ) }
-                        </div>
-                        <div className="p-2">
-                          <div className="flex items-center justify-between mb-0.5">
-                            <span className="text-white font-semibold text-[10px]">#{index+1}</span>
-                            <span className="text-white/50 text-[9px]">{new Date(frame.timestamp).toLocaleTimeString()}</span>
+                <div className={`clapper-body ${openWeeks[week] ? '' : 'closed'}`}> 
+                  <div className="clapper-grid">
+                    {[...sorted].reverse().map((frame)=>{
+                      const index = frames.indexOf(frame);
+                      const key = (frame as any).key || frame.id;
+                      return (
+                        <div key={key} className="clapper-frame-card">
+                          <div className="clapper-thumb">
+                            {(frame.imageData || hydrated[key]) ? (
+                              <img
+                                src={frame.imageData || hydrated[key]}
+                                alt={`Frame ${index+1}`}
+                                loading="lazy"
+                                onError={()=>{ if(!hydrated[key]) hydrateFrame(frame); }}
+                              />
+                            ) : (
+                              <button
+                                onClick={()=>hydrateFrame(frame)}
+                                className="vote-btn"
+                                title="Load image"
+                              >Load</button>
+                            )}
                           </div>
-                          <div className="flex items-center space-x-1.5 text-white/70 text-[9px] mb-0.5">
-                            <User className="w-3 h-3" />
-                            <span className="truncate max-w-[70px]">{frame.artist}</span>
-                          </div>
-                          <div className="flex items-center space-x-1.5 text-white/60 text-[8px]">
-                            <Calendar className="w-3 h-3" />
-                            <span>{formatDate(frame.timestamp)}</span>
-                          </div>
-                          {key && (
-                            <div className="mt-1 flex items-center justify-end gap-2">
-                              <button aria-label="Upvote" onClick={()=>vote(key, votes[key]?.my===1 ? 0 : 1)} className={`p-0.5 rounded ${votes[key]?.my===1? 'text-green-400':'text-white/50'} hover:text-green-300`}>
-                                <ArrowBigUp className="w-4 h-4" />
-                              </button>
-                              <span className="text-[9px] text-white/60">{(votes[key]?.up ?? 0) - (votes[key]?.down ?? 0)}</span>
-                              <button aria-label="Downvote" onClick={()=>vote(key, votes[key]?.my===-1 ? 0 : -1)} className={`p-0.5 rounded ${votes[key]?.my===-1? 'text-red-400':'text-white/50'} hover:text-red-300`}>
-                                <ArrowBigDown className="w-4 h-4" />
-                              </button>
+                          <div className="clapper-frame-meta">
+                            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                              <span style={{fontSize:10,fontWeight:600}}>#{index+1}</span>
+                              <span style={{fontSize:9,opacity:0.6}}>{new Date(frame.timestamp).toLocaleTimeString()}</span>
                             </div>
-                          )}
+                            <div style={{display:'flex',alignItems:'center',gap:4,marginTop:2,fontSize:9}}>
+                              <User className="w-3 h-3" />
+                              <span className="truncate" style={{maxWidth:70}}>{frame.artist}</span>
+                            </div>
+                            <div style={{display:'flex',alignItems:'center',gap:4,marginTop:2,fontSize:8,opacity:0.7}}>
+                              <Calendar className="w-3 h-3" />
+                              <span>{formatDate(frame.timestamp)}</span>
+                            </div>
+                            {key && (
+                              <div className="vote-bar">
+                                <button aria-label="Upvote" onClick={()=>vote(key, votes[key]?.my===1 ? 0 : 1)} className={`vote-btn ${votes[key]?.my===1 ? 'active' : ''}`}>
+                                  <ArrowBigUp className="w-4 h-4" />
+                                </button>
+                                <span style={{fontSize:9,opacity:0.7}}>{(votes[key]?.up ?? 0) - (votes[key]?.down ?? 0)}</span>
+                                <button aria-label="Downvote" onClick={()=>vote(key, votes[key]?.my===-1 ? 0 : -1)} className={`vote-btn ${votes[key]?.my===-1 ? 'active' : ''}`}>
+                                  <ArrowBigDown className="w-4 h-4" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
-              )}
+              </div>
             </div>
           );
         })}

@@ -79,7 +79,6 @@ function App() {
   const [zoom, setZoom] = useState(1);
   const [onionOpacity, setOnionOpacity] = useState(0.35);
   // Dynamic weekly tools from backend
-  const [toolsVersion, setToolsVersion] = useState<string>('');
   const [allowedBrushIds, setAllowedBrushIds] = useState<string[] | undefined>(undefined);
   const [paletteColors, setPaletteColors] = useState<string[] | undefined>(undefined);
   // Poll finalized frames periodically to keep spectators in sync (artist already refreshes on finalize)
@@ -116,6 +115,8 @@ function App() {
   // Turn-based state
   const [currentUser, setCurrentUser] = useState<string>('anonymous');
   const [turnInfo, setTurnInfo] = useState<any>(null);
+  // Track if this user explicitly started the current turn (prevents auto re-claim after finalize)
+  const startedByMeRef = useRef<boolean>(false);
   // lobbyActionLoading removed (buttons moved into side panel)
   // Artist readiness removed; first click claims turn
   // debugMode removed (fast forward no longer used)
@@ -183,7 +184,7 @@ function App() {
     let id: number | null = null;
     const fetchTurn = async () => {
       try {
-  const r = await fetch(prefixIfLocal('/api/turn'));
+  const r = await fetch(prefixIfLocal('/api/turn'), { headers: { 'X-User': currentUser } as any });
         if(!r.ok) return;
         const j = await r.json();
         setTurnInfo(j);
@@ -192,7 +193,7 @@ function App() {
     fetchTurn();
     id = window.setInterval(fetchTurn, 15000);
     return () => { if(id) window.clearInterval(id); };
-  }, []);
+  }, [currentUser]);
 
   // Track artist window start timestamp
   useEffect(() => {
@@ -201,6 +202,19 @@ function App() {
       setSessionStartTs(turnInfo.windowStart);
     }
   }, [turnInfo?.currentArtist, turnInfo?.windowStart]);
+
+  // Auto-resume: if server says our user is the current artist but we haven't marked started, re-claim silently
+  useEffect(() => {
+    if (!turnInfo || !currentUser) return;
+    if (startedByMeRef.current && turnInfo.currentArtist === currentUser && timeLeft > 0) {
+      // Best-effort reassert claim so server can treat us as active (idempotent)
+      (async () => {
+        try {
+          await fetch('/api/turn', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-User': currentUser } as any, body: JSON.stringify({ action: 'resume', user: currentUser }) });
+        } catch {}
+      })();
+    }
+  }, [turnInfo?.currentArtist, currentUser, timeLeft]);
 
   const persistDraft = useCallback(() => {
     if (!canvasRef.current) return;
@@ -214,11 +228,22 @@ function App() {
 
   // Countdown robust: use server windowEnd/timeToEndSeconds; correct drift periodically
   const countdownRef = useRef<{ targetMs: number; lastServerSync: number; lastDisplayed: number }>({ targetMs: 0, lastServerSync: 0, lastDisplayed: 0 });
+  // Arm finalize only after a valid countdown has been established for me-as-artist
+  const countdownArmedRef = useRef<boolean>(false);
   useEffect(() => {
     if (!turnInfo) return;
     const now = Date.now();
+    const isActive = Boolean(turnInfo.currentArtist) && Boolean(turnInfo.started) && (typeof turnInfo.windowEnd === 'number' && turnInfo.windowEnd > 0);
+    if (!isActive) {
+      // Idle: ensure timer stays at zero and target cleared
+      countdownRef.current.targetMs = 0;
+      countdownRef.current.lastServerSync = now;
+      setTimeLeft(0);
+      countdownArmedRef.current = false; // disarm when idle or not active
+      return;
+    }
     let target = 0;
-    if (typeof turnInfo.windowEnd === 'number') {
+    if (typeof turnInfo.windowEnd === 'number' && turnInfo.windowEnd > 0) {
       target = turnInfo.windowEnd;
     } else if (typeof turnInfo.timeToEndSeconds === 'number') {
       target = now + turnInfo.timeToEndSeconds * 1000;
@@ -226,8 +251,10 @@ function App() {
     if (target > 0) {
       countdownRef.current.targetMs = target;
       countdownRef.current.lastServerSync = now;
+      // Only arm if I am the current artist
+      countdownArmedRef.current = (turnInfo.currentArtist === currentUser);
     }
-  }, [turnInfo?.windowEnd, turnInfo?.timeToEndSeconds]);
+  }, [turnInfo?.windowEnd, turnInfo?.timeToEndSeconds, turnInfo?.currentArtist, turnInfo?.started, currentUser]);
 
   useEffect(() => {
     const tick = () => {
@@ -256,7 +283,7 @@ function App() {
       // Guard: ensure object
       if (!cfg || typeof cfg !== 'object') return;
       if (typeof cfg.currentWeek === 'number') setCurrentWeek(cfg.currentWeek);
-      if (typeof cfg.toolsVersion === 'string') setToolsVersion(prev => prev !== cfg.toolsVersion ? cfg.toolsVersion : prev);
+  // toolsVersion display removed from debug bar; ignore cfg.toolsVersion
       // Prefer canonical tools object if present
       const colors: string[] | undefined = cfg?.tools?.palette?.colors || cfg.paletteColors;
   const rawBrushes = (cfg?.tools?.brushKit?.brushes || cfg.brushes) as any;
@@ -324,7 +351,7 @@ function App() {
     // Fire-and-forget upload to shared pending endpoint
     (async () => {
       try {
-  await fetch(prefixIfLocal('/api/pending-frame'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dataUrl }) });
+  await fetch(prefixIfLocal('/api/pending-frame'), { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-User': currentUser } as any, body: JSON.stringify({ dataUrl, user: currentUser }) });
       } catch {}
     })();
   }, [turnInfo, currentUser, persistDraft]);
@@ -341,12 +368,14 @@ function App() {
         if (canvasRef.current) {
           try {
             const dataUrl = canvasRef.current.toDataURL('image/png');
-            await fetch('/api/pending-frame', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dataUrl }) });
+            await fetch('/api/pending-frame', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-User': currentUser } as any, body: JSON.stringify({ dataUrl, user: currentUser }) });
           } catch {}
         }
         await fetch('/api/finalize-turn', { method: 'POST' });
-        const r = await fetch('/api/turn');
+        const r = await fetch('/api/turn', { headers: { 'X-User': currentUser } as any });
         if (r.ok) setTurnInfo(await r.json());
+  // Mark that our explicit session ended
+  startedByMeRef.current = false;
   // Clear local pending caches
   setPendingFrameDataUrl(null);
   setSharedPending(null);
@@ -402,7 +431,7 @@ function App() {
     if (active) {
       const fetchPending = async () => {
         try {
-          const r = await fetch(prefixIfLocal('/api/pending-frame'));
+          const r = await fetch(prefixIfLocal('/api/pending-frame'), { headers: { 'X-User': currentUser } as any });
           if (!r.ok) return;
           const j = await r.json();
           if (j && j.pending && j.pending.url) {
@@ -422,16 +451,12 @@ function App() {
       interval = window.setInterval(fetchPending, 10000);
     }
     return () => { if (interval) window.clearInterval(interval); };
-  }, [currentView]);
+  }, [currentView, currentUser]);
 
   // Auto finalize when window ends and we were the artist
   const prevArtistRef = useRef<string | null>(null);
   useEffect(() => {
     if (!turnInfo) return;
-    if (prevArtistRef.current && prevArtistRef.current === currentUser && prevArtistRef.current !== turnInfo.currentArtist) {
-      // Artist switched; ensure any pending frame is finalized via server finalize endpoint
-      forceEndSession();
-    }
     // Only react when artist actually changes (avoid flicker each poll)
     if (prevArtistRef.current !== turnInfo.currentArtist) {
       const previous = prevArtistRef.current;
@@ -453,14 +478,18 @@ function App() {
         }
       }
     }
-  }, [turnInfo?.currentArtist, forceEndSession, currentUser]);
+  }, [turnInfo?.currentArtist, currentUser]);
 
   useEffect(() => {
-    if (timeLeft === 0 && turnInfo && turnInfo.currentArtist) {
-      // Auto finalize once when window hits zero by current artist (best-effort)
-      if (turnInfo.currentArtist === currentUser) {
-        forceEndSession();
-      }
+    // Guard: only auto-finalize if countdown truly ended and was armed for me
+    if (!turnInfo || turnInfo.currentArtist !== currentUser) return;
+    const target = countdownRef.current.targetMs;
+    if (!target || !countdownArmedRef.current) return;
+    const now = Date.now();
+    const ended = now >= target - 250; // small drift tolerance
+    if (ended && timeLeft === 0) {
+      countdownArmedRef.current = false; // one-shot
+      forceEndSession();
     }
   }, [timeLeft, turnInfo?.currentArtist, currentUser, forceEndSession]);
 
@@ -536,13 +565,36 @@ function App() {
     ctx.putImageData(prev, 0, 0);
   };
 
+  const themes = ['Anime Inking', 'Retro Comic', 'Soft Watercolor'];
+  let storedBundleTheme: string | null = null;
+  try {
+    const wbRaw = localStorage.getItem('weekBundle_'+currentWeek);
+    if (wbRaw) { const wb = JSON.parse(wbRaw); if (wb && typeof wb.theme === 'string') storedBundleTheme = wb.theme; }
+  } catch {}
+  const currentTheme = storedBundleTheme || themes[currentWeek % themes.length];
+  const formatCountdown = (sec:number)=>{
+    const h = Math.floor(sec/3600).toString().padStart(2,'0');
+    const m = Math.floor((sec%3600)/60).toString().padStart(2,'0');
+    const s = (sec%60).toString().padStart(2,'0');
+    return `${h}:${m}:${s}`;
+  };
+
   return (
   <div className={`min-h-screen pencil-theme ${isEmbedded ? 'embedded-mode' : ''}`}>
       {/* Deployment badge para verificar nuevo build en Reddit */}
-      <div className="pointer-events-none select-none fixed top-1 right-2 z-[999] text-[10px] font-mono sketch-border px-2 py-1 rounded tracking-tight">
-        v0.1.0-redis-purge <span className="opacity-70">23:15Z</span>
-        {toolsVersion ? <span className="ml-1 opacity-80">| tv:{toolsVersion}</span> : null}
+      <div className="pointer-events-none select-none fixed top-1 right-2 z-[999] text-[10px] font-mono sketch-border px-2 py-1 rounded tracking-tight bg-[#FAF3E0] text-black shadow-[3px_3px_0_0_#000] flex items-center gap-2">
+        <span className="font-semibold">Week {currentWeek}</span>
+        <span className="opacity-70">{currentTheme}</span>
+        <span className="opacity-50">|</span>
+        <span className="flex items-center gap-1">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 opacity-80"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <span className="tabular-nums">{formatCountdown(timeLeft)}</span>
+        </span>
+        <span className="opacity-50">|</span>
+        <span className="max-w-[130px] truncate font-semibold">{turnInfo?.currentArtist ? `u/${turnInfo.currentArtist}` : 'No artist'}</span>
       </div>
+      {/* Minimal spacer (5px) below fixed debug bar */}
+      <div style={{height:'5px'}} aria-hidden="true" />
       {/* Embedding indicator for Reddit */}
   {/* Reddit banner removed */}
       
@@ -576,9 +628,10 @@ function App() {
               onUndo={undo}
               disabled={!(turnInfo && turnInfo.currentArtist === currentUser) || timeLeft === 0}
               timeLeft={timeLeft}
-              onStartTurn={async () => { try { await fetch('/api/turn',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'start', user: currentUser }) }); const r= await fetch('/api/turn'); if(r.ok) setTurnInfo(await r.json()); } catch {} }}
+              // After a successful start, mark explicit ownership to enable re-claim resilience if needed
+              onStartTurn={async () => { try { await fetch('/api/turn',{ method:'POST', headers:{'Content-Type':'application/json','X-User': currentUser } as any, body: JSON.stringify({ action:'start', user: currentUser }) }); const r= await fetch('/api/turn', { headers: { 'X-User': currentUser } as any }); if(r.ok) { setTurnInfo(await r.json()); startedByMeRef.current = true; } } catch {} }}
               onFinalizeTurn={forceEndSession}
-              canStart={Boolean(turnInfo && !turnInfo.currentArtist && timeLeft > 0)}
+              canStart={Boolean(turnInfo && !turnInfo.currentArtist)}
               isArtist={Boolean(turnInfo && turnInfo.currentArtist === currentUser)}
               currentArtist={turnInfo?.currentArtist || null}
               allowedBrushIds={allowedBrushIds}

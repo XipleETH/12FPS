@@ -4,14 +4,14 @@ import { ChevronLeft, ChevronRight, MoveUp, MoveDown, Save, Trash2, Undo2, Penci
 
 // Minimal clapperboard icons (open/closed) tailored for start/finalize actions
 const ClapperOpen: React.FC<{ className?: string }> = ({ className }) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+  <svg viewBox="0 0 24 24" fill="none" stroke="black" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
     <path d="M3 11h18v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9Z" />
     <path d="m3 7 2.5 2M7 5l2.5 4M11 5l2.5 4M15 5l2.5 4M19 5l2 4" />
     <path d="M3 7V5a1 1 0 0 1 1-1h3.2a1 1 0 0 1 .8.4L10 7" />
   </svg>
 );
 const ClapperClosed: React.FC<{ className?: string }> = ({ className }) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+  <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
     <path d="M3 10h18v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V10Z" />
     <path d="M3 6h18v4H3z" />
     <path d="m5 6 2.5 4M9 6l2.5 4M13 6l2.5 4M17 6l2 4" />
@@ -148,35 +148,41 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
         <PanelWrapper key={key} title="Actions" {...common}>
           <div className="flex flex-col gap-2.5">
             <div className="flex items-center justify-center gap-2.5">
-              {(canStart || isArtist) && (
-                (() => {
-                  const turnBtnDisabled = isArtist ? !!disabled : !canStart; // starting allowed even if drawing disabled
-                  return (
-                    <button
-                      onClick={() => {
-                        if (turnBtnDisabled) return;
-                        if (isArtist && onFinalizeTurn) {
-                          onFinalizeTurn();
-                        } else if (canStart) {
-                          onStartTurn?.();
-                        }
-                      }}
-                      aria-label={isArtist ? 'Finalize Turn' : 'Start Turn'}
-                      title={isArtist ? 'Finalize Turn' : 'Start Turn'}
-                      className={`p-2 rounded-full text-white transition focus:outline-none focus:ring-2 focus:ring-white/50 ${
-                        turnBtnDisabled
-                          ? 'bg-blue-500/30 cursor-not-allowed'
-                          : isArtist
-                            ? 'bg-black/80 hover:bg-black'
-                            : 'bg-blue-600/80 hover:bg-blue-600'
-                      }`}
-                      disabled={turnBtnDisabled}
-                    >
-                      {isArtist ? <ClapperClosed className="w-4 h-4" /> : <ClapperOpen className="w-4 h-4" />}
-                    </button>
-                  );
-                })()
-              )}
+              {(() => {
+                // Determine button state: finalize (artist), start (idle), wait (someone else is artist)
+                const state: 'finalize' | 'start' | 'wait' = isArtist ? 'finalize' : (canStart ? 'start' : 'wait');
+                const isDisabled = state === 'finalize' ? !!disabled : (state === 'wait');
+                const onClick = () => {
+                  if (isDisabled) return;
+                  if (state === 'finalize' && onFinalizeTurn) return onFinalizeTurn();
+                  if (state === 'start') return onStartTurn?.();
+                };
+                const aria = state === 'finalize' ? 'Finalize Turn' : state === 'start' ? 'Start Turn' : 'Wait Turn';
+                const title = aria;
+                // Background/border per state
+                const cls = state === 'wait'
+                  ? 'bg-blue-500/30 cursor-not-allowed'
+                  : state === 'finalize'
+                    ? 'bg-black/90 hover:bg-black'
+                    : 'bg-white hover:bg-white/90 border border-black/80';
+                // Text/icon color per state
+                const textCls = state === 'start' ? 'text-black' : 'text-white';
+                // Focus ring color per state for contrast
+                const ringCls = state === 'start' ? 'focus:ring-black/40' : 'focus:ring-white/50';
+                const Icon = state === 'finalize' ? ClapperClosed : state === 'start' ? ClapperOpen : Clock;
+                const iconCls = state === 'start' ? 'text-black' : 'text-white';
+                return (
+                  <button
+                    onClick={onClick}
+                    aria-label={aria}
+                    title={title}
+                    className={`p-2 rounded-full ${textCls} transition focus:outline-none focus:ring-2 ${ringCls} ${cls}`}
+                    disabled={isDisabled}
+                  >
+                    <Icon className={`w-4 h-4 ${iconCls}`} />
+                  </button>
+                );
+              })()}
               <button onClick={() => !disabled && onSave()} disabled={disabled} aria-label="Save Frame" className="p-2 rounded-full pencil-btn pencil-fill-emerald disabled:opacity-40 transition">
                 <Save className="w-4 h-4" />
               </button>
@@ -187,10 +193,11 @@ export const SidePanels: React.FC<SidePanelsProps> = ({
                 <Trash2 className="w-4 h-4" />
               </button>
             </div>
-            {typeof timeLeft === 'number' && (
+            {/* Hidden: timer and username moved to top bar; keep code for easy re-enable */}
+            {false && typeof timeLeft === 'number' && (
               <div className="flex items-center justify-center gap-2 text-white/90 text-[11px] font-mono flex-wrap">
                 <Clock className="w-4 h-4 text-white/80" />
-                <span>{new Date(timeLeft * 1000).toISOString().substring(11,19)}</span>
+                <span>{new Date((timeLeft as number) * 1000).toISOString().substring(11,19)}</span>
                 <span className="text-white/60">|
                   <span className="ml-1 font-semibold text-white/90">{currentArtist ? currentArtist : '—'}</span>
                 </span>
