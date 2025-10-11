@@ -115,9 +115,15 @@ export default async function handler(req,res){
             // After adjusting time, a computeState call will auto select from lobby (if any)
             return res.status(200).json(computeState());
         }
+      case 'resume': {
+        // Resume MUST NOT claim a new window; only acknowledge if same user is already current artist
+        const st2 = computeState();
+        const active = !!lastSelected && st2.windowStart === (lastSelected?.windowStart||0);
+        const same = active && lastSelected?.user === user;
+        return res.status(200).json({ ...st2, resumed: true, sameUser: same });
+      }
       case 'start':
-      case 'resume':
-        // Claim the current window for this user
+        // Claim the current window for this user (first-come-first-serve)
         lastSelected = { user, windowStart: computeState().windowStart };
         return res.status(200).json(computeState());
       default:

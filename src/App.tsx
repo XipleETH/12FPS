@@ -117,6 +117,8 @@ function App() {
   const [turnInfo, setTurnInfo] = useState<any>(null);
   // Track if this user explicitly started the current turn (prevents auto re-claim after finalize)
   const startedByMeRef = useRef<boolean>(false);
+  // Add a short cooldown timestamp to suppress auto-resume right after finalize
+  const lastFinalizeAtRef = useRef<number>(0);
   // lobbyActionLoading removed (buttons moved into side panel)
   // Artist readiness removed; first click claims turn
   // debugMode removed (fast forward no longer used)
@@ -206,7 +208,32 @@ function App() {
   // Auto-resume: if server says our user is the current artist but we haven't marked started, re-claim silently
   useEffect(() => {
     if (!turnInfo || !currentUser) return;
-    if (startedByMeRef.current && turnInfo.currentArtist === currentUser && timeLeft > 0) {
+    const sinceFinalize = Date.now() - lastFinalizeAtRef.current;
+    const inCooldown = sinceFinalize >= 0 && sinceFinalize < 3000; // 3s cooldown after finalize
+    if (!inCooldown && startedByMeRef.current && turnInfo.currentArtist === currentUser && timeLeft > 0) {
+      // Best-effort reassert claim so server can treat us as active (idempotent)
+      (async () => {
+        try {
+          await fetch('/api/turn', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-User': currentUser } as any, body: JSON.stringify({ action: 'resume', user: currentUser }) });
+        } catch {}
+      })();
+    }
+  }, [turnInfo?.currentArtist, currentUser, timeLeft]);
+
+  // Track artist window start timestamp
+  useEffect(() => {
+    if (!turnInfo) return;
+    if (turnInfo.currentArtist) {
+      setSessionStartTs(turnInfo.windowStart);
+    }
+  }, [turnInfo?.currentArtist, turnInfo?.windowStart]);
+
+  // Auto-resume: if server says our user is the current artist but we haven't marked started, re-claim silently
+  useEffect(() => {
+    if (!turnInfo || !currentUser) return;
+    const sinceFinalize = Date.now() - lastFinalizeAtRef.current;
+    const inCooldown = sinceFinalize >= 0 && sinceFinalize < 3000; // 3s cooldown after finalize
+    if (!inCooldown && startedByMeRef.current && turnInfo.currentArtist === currentUser && timeLeft > 0) {
       // Best-effort reassert claim so server can treat us as active (idempotent)
       (async () => {
         try {
@@ -364,37 +391,38 @@ function App() {
     if (!(turnInfo && turnInfo.currentArtist === currentUser)) return;
     (async () => {
       try {
-        // Capture current canvas into pending-frame first
-        if (canvasRef.current) {
-          try {
-            const dataUrl = canvasRef.current.toDataURL('image/png');
-            await fetch('/api/pending-frame', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-User': currentUser } as any, body: JSON.stringify({ dataUrl, user: currentUser }) });
-          } catch {}
-        }
-        await fetch('/api/finalize-turn', { method: 'POST' });
-        const r = await fetch('/api/turn', { headers: { 'X-User': currentUser } as any });
-        if (r.ok) setTurnInfo(await r.json());
-  // Mark that our explicit session ended
-  startedByMeRef.current = false;
-  // Clear local pending caches
-  setPendingFrameDataUrl(null);
-  setSharedPending(null);
-        // Clear draft (local) after finalize so next artist starts clean
-        try { localStorage.removeItem(DRAFT_KEY); } catch {}
-        setDraftImage(null);
-        // Proactively clear canvas for local view
-        if (canvasRef.current) {
-          const ctx = canvasRef.current.getContext('2d');
-          if (ctx) {
-            ctx.save();
-            ctx.setTransform(1,0,0,1,0,0);
-            ctx.clearRect(0,0,canvasRef.current.width, canvasRef.current.height);
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0,0,canvasRef.current.width, canvasRef.current.height);
-            ctx.restore();
-          }
-        }
-        // Reload frames list to include newly finalized frame
+        // Immediately mark as ended and start cooldown to avoid any auto-resume race
+        startedByMeRef.current = false;
+        lastFinalizeAtRef.current = Date.now();
+         // Capture current canvas into pending-frame first
+         if (canvasRef.current) {
+           try {
+             const dataUrl = canvasRef.current.toDataURL('image/png');
+             await fetch('/api/pending-frame', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-User': currentUser } as any, body: JSON.stringify({ dataUrl, user: currentUser }) });
+           } catch {}
+         }
+         await fetch('/api/finalize-turn', { method: 'POST' });
+         const r = await fetch('/api/turn', { headers: { 'X-User': currentUser } as any });
+         if (r.ok) setTurnInfo(await r.json());
+         // Clear local pending caches
+         setPendingFrameDataUrl(null);
+         setSharedPending(null);
+         // Clear draft (local) after finalize so next artist starts clean
+         try { localStorage.removeItem(DRAFT_KEY); } catch {}
+         setDraftImage(null);
+         // Proactively clear canvas for local view
+         if (canvasRef.current) {
+           const ctx = canvasRef.current.getContext('2d');
+           if (ctx) {
+             ctx.save();
+             ctx.setTransform(1,0,0,1,0,0);
+             ctx.clearRect(0,0,canvasRef.current.width, canvasRef.current.height);
+             ctx.fillStyle = '#ffffff';
+             ctx.fillRect(0,0,canvasRef.current.width, canvasRef.current.height);
+             ctx.restore();
+           }
+         }
+         // Reload frames list to include newly finalized frame
         const lf = await fetch('/api/list-frames');
         if (lf.ok) {
           const data = await lf.json();

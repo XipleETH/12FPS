@@ -296,6 +296,17 @@ router.post('/api/turn', async (_req, res) => {
     if (state.started && state.windowEnd > 0 && now >= state.windowEnd) {
       state = await resetTurnWindow();
     }
+    // Distinguish between explicit 'start' and 'resume' actions to avoid accidental re-claim after finalize
+    const action = typeof _req?.body?.action === 'string' ? String(_req.body.action).toLowerCase() : 'start';
+
+    if (action === 'resume') {
+      // Resume should NEVER claim a new window. It only reaffirms if this user is the current artist in an active window.
+      const active = state.started && !!state.currentArtist && now < state.windowEnd;
+      const sameUser = active && state.currentArtist === username;
+      return res.json({ ok: true, action: 'resume', active, sameUser, claimed: false, currentArtist: state.currentArtist });
+    }
+
+    // action === 'start' (or default): claim if idle; otherwise report current artist
     if (!state.started || !state.currentArtist) {
       // first come first serve claim
       state.currentArtist = username;
@@ -304,13 +315,13 @@ router.post('/api/turn', async (_req, res) => {
       state.windowStart = now;
       state.windowEnd = now + TWO_HOURS_MS;
       await saveTurn(state);
-      return res.json({ ok: true, claimed: true, currentArtist: state.currentArtist });
+      return res.json({ ok: true, action: 'start', claimed: true, currentArtist: state.currentArtist });
     }
-    // If same user as current artist, confirm continuity
+    // If same user as current artist, confirm continuity (but don't extend window)
     if (state.currentArtist === username) {
-      return res.json({ ok: true, claimed: true, currentArtist: state.currentArtist });
+      return res.json({ ok: true, action: 'start', claimed: true, currentArtist: state.currentArtist });
     }
-    return res.json({ ok: true, claimed: false, currentArtist: state.currentArtist });
+    return res.json({ ok: true, action: 'start', claimed: false, currentArtist: state.currentArtist });
   } catch(e:any) {
     console.error('[turn:post] error', e?.message);
     res.status(500).json({ error: 'turn claim failed' });
